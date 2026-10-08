@@ -1,0 +1,23 @@
+[deps]
+HDF5 = "f67ccb44-e63f-5c2f-98bd-6dc0ccc4ba2f"
+KernelAbstractions = "63c18a36-062a-441e-b654-da1e3ab1ce7c"
+MPI = "da04e1cc-30fd-572f-bb4f-1f8673147195"
+MultiFloats = "bdf0d083-296b-4888-a5b6-7498122e68a5"
+OrdinaryDiffEqLowOrderRK = "1344f307-1e59-4825-a18e-ace9aa3fa4c6"
+OrdinaryDiffEqSSPRK = "669c94d9-1f4b-4b64-b377-1aa079aa2388"
+Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+SHA = "ea8e919c-243c-51af-8825-aaa63cd721ce"
+SciMLBase = "0bca4576-84f4-4d90-8ffe-ffa030f20462"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+TreeAMR = "91bc416d-811c-44c1-9bc4-b9c8bbdbbd08"
+TreeIOHDF5 = "49af10b2-b28a-4989-bafa-527ac30d3246"
+
+[compat]
+HDF5 = "0.17"
+MPI = "0.20"
+MultiFloats = "3"
+
+[sources]
+TreeAMR = {path = "/Users/eschnett/src/jl/TreeAMR/.claude/worktrees/treeamr-subcycling-docs-e6e81a"}
+TreeIOHDF5 = {path = ".."}

@@ -1,0 +1,8 @@
+[deps]
+Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
+TreeAMR = "91bc416d-811c-44c1-9bc4-b9c8bbdbbd08"
+TreeIOHDF5 = "49af10b2-b28a-4989-bafa-527ac30d3246"
+
+[sources]
+TreeAMR = {path = "/Users/eschnett/src/jl/TreeAMR/.claude/worktrees/treeamr-subcycling-docs-e6e81a"}
+TreeIOHDF5 = {path = ".."}

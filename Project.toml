@@ -1,0 +1,26 @@
+name = "TreeIOHDF5"
+uuid = "49af10b2-b28a-4989-bafa-527ac30d3246"
+version = "0.1.0"
+authors = ["Erik Schnetter <schnetter@gmail.com>"]
+
+[deps]
+CRC32c = "8bf52ea8-c179-5cab-976a-9e18b702a9bc"
+HDF5 = "f67ccb44-e63f-5c2f-98bd-6dc0ccc4ba2f"
+KernelAbstractions = "63c18a36-062a-441e-b654-da1e3ab1ce7c"
+TreeAMR = "91bc416d-811c-44c1-9bc4-b9c8bbdbbd08"
+
+# TreeAMR 0.2.0 is not registered yet: until it is, take it from the
+# checkout that holds the split. Remove this section once it is.
+[sources]
+TreeAMR = {path = "/Users/eschnett/src/jl/TreeAMR/.claude/worktrees/treeamr-subcycling-docs-e6e81a"}
+
+[compat]
+CRC32c = "1"
+HDF5 = "0.17"
+KernelAbstractions = "0.9.42, 1"
+# Exact versions only: this package uses TreeAMR's companion interface,
+# which TreeAMR's semantic versioning does not cover (TreeAMR's `CODE.md`,
+# "Companion interface"). Append a version once this package's suite has
+# passed against it.
+TreeAMR = "=0.2.0"
+julia = "1.11"
