@@ -51,8 +51,8 @@ julia --project=. -e 'using Pkg; Pkg.test(; julia_args = ["--threads=4"])'
 ```
 
 On a fresh clone, instantiate the test and docs environments first.
-They locate TreeAMR through `[sources]` — a local checkout until the
-TreeAMR version in `[compat]` is registered — and this package as `..`:
+They take TreeAMR from General and this package as `..`, through
+`[sources]`:
 
 ```bash
 julia --project=test -e 'using Pkg; Pkg.instantiate()'

@@ -19,9 +19,7 @@ jobs:
     # default binary of MPI.jl, which needs nothing installed or set
     # here; each launch has a deadline of its own in `mpi_tests.jl`, but
     # a rank stuck outside it would otherwise hold the runner for the
-    # default six hours. (Until the TreeAMR version in `[compat]` is
-    # registered, `[sources]` names a local checkout and CI cannot
-    # resolve.)
+    # default six hours.
     timeout-minutes: 120
     strategy:
       fail-fast: false

@@ -19,5 +19,4 @@ MPI = "0.20"
 MultiFloats = "3"
 
 [sources]
-TreeAMR = {path = "/Users/eschnett/src/jl/TreeAMR/.claude/worktrees/treeamr-subcycling-docs-e6e81a"}
 TreeIOHDF5 = {path = ".."}

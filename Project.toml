@@ -9,11 +9,6 @@ HDF5 = "f67ccb44-e63f-5c2f-98bd-6dc0ccc4ba2f"
 KernelAbstractions = "63c18a36-062a-441e-b654-da1e3ab1ce7c"
 TreeAMR = "91bc416d-811c-44c1-9bc4-b9c8bbdbbd08"
 
-# TreeAMR 0.2.0 is not registered yet: until it is, take it from the
-# checkout that holds the split. Remove this section once it is.
-[sources]
-TreeAMR = {path = "/Users/eschnett/src/jl/TreeAMR/.claude/worktrees/treeamr-subcycling-docs-e6e81a"}
-
 [compat]
 CRC32c = "1"
 HDF5 = "0.17"

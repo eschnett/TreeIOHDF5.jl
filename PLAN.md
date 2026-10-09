@@ -6,11 +6,9 @@
 
 ## Release 0.1.0
 
-1. **Register.** After TreeAMR 0.2.0 is registered: create
-   `github.com/eschnett/TreeIOHDF5.jl`, its Codecov token and its
-   `DOCUMENTER_KEY`; remove the `[sources]` entries for TreeAMR from
-   `Project.toml`, `test/Project.toml` and `docs/Project.toml`; tag and
-   register 0.1.0 with `[compat] TreeAMR = "=0.2.0"`. *Done when* CI is
+1. **Register.** TreeAMR 0.2.0 is registered, and the repository
+   exists; what is left is its Codecov token and its `DOCUMENTER_KEY`,
+   then tag and register 0.1.0 with `[compat] TreeAMR = "=0.2.0"`. *Done when* CI is
    green on GitHub and the package resolves from General.
 2. **The downstreams.** Neither is changed yet; each needs, on a branch
    of its own, and then a release:
