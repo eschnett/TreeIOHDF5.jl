@@ -500,6 +500,8 @@ const FACE_KINDS = (:periodic, :outer, :reflect_lo, :reflect_hi, :reflect_both)
 face_periodic(kind::Symbol) = kind === :periodic
 face_reflecting(kind::Symbol) = (kind === :reflect_lo || kind === :reflect_both,
                                  kind === :reflect_hi || kind === :reflect_both)
+face_outflow(kind::Symbol) = (kind === :outflow_lo || kind === :outflow_both,
+                              kind === :outflow_hi || kind === :outflow_both)
 
 """
 A brick of side `roots` (3 in 1D, 2 otherwise) whose faces are `kinds`,
@@ -516,6 +518,7 @@ function faces_forest(kinds::NTuple{D,Symbol}; T::Type=Float64, N=8) where {D}
     forest = Forest{T}(ntuple(_ -> roots, D); N=N,
                        periodic=map(face_periodic, kinds),
                        reflecting=map(face_reflecting, kinds),
+                       outflow=map(face_outflow, kinds),
                        extents=ntuple(_ -> (0, roots), D))
     corner(c, r) = all(d -> c[d] < r, 1:D) || all(d -> c[d] > roots - r, 1:D)
     refine_where!(forest, (c, lvl) -> (lvl == 0 && corner(c, 1.0)) ||
@@ -552,7 +555,7 @@ function parity_data(::Type{T}, kinds::NTuple{D,Symbol}, p::Int;
     keep(e) = e < p ? 1 : 0
     coef(v, d) = begin
         kind = kinds[d]
-        if kind === :periodic || kind === :reflect_both
+        if kind === :periodic || kind === :reflect_both || any(face_outflow(kind))
             (1 + d / 10, 0, 0, 0)
         elseif kind === :outer
             (0.3 + (d + v) / 10, 0.2, 0.1 * keep(2), 0.05 * keep(3))
@@ -773,7 +776,8 @@ function unfolded_forest(quad::Forest{D}) where {D}
     M = quad.roots[d1]
     inplane(d) = d == d1 || d == d2
     roots = ntuple(d -> inplane(d) ? 2M : quad.roots[d], D)
-    full = Forest(roots; N=quad.N, periodic=quad.periodic, reflecting=quad.reflecting)
+    full = Forest(roots; N=quad.N, periodic=quad.periodic,
+                  reflecting=TreeAMR.reflecting_faces(quad))
     # From coordinates about the axis to the unfolded brick's, and back.
     shift = ntuple(d -> inplane(d) ? M : 0, D)
     image(k, r) = box_key(roots, map(c -> c .+ shift, rotate_box(leafbox(quad, k), r,
@@ -1110,7 +1114,7 @@ function hook_regions_leave(schedule::GhostSchedule{T,D}) where {T,D}
     M = forest.roots[d1]
     return all(schedule.boundaries) do region
         k = forest.leaves[region.block]
-        δ′, _ = TreeAMR.reflect_direction(forest, k, region.direction)
+        δ′, _ = TreeAMR.wall_direction(forest, k, region.direction)
         lo, hi = leafbox(forest, k)
         s = hi[1] - lo[1]
         slo, shi = lo .+ s .* δ′, hi .+ s .* δ′

@@ -40,7 +40,8 @@ benchmark and the Symmetry jobs, `test/` the suite.
 TreeIOHDF5 is a companion package of TreeAMR: it provides infrastructure,
 and so it uses TreeAMR's internals — the communicator verbs, the
 cross-rank agreement (`ForestDigest`, `digest_verdict`, `layouthash`),
-the seam (`hasrotating`, `rotating_dims`), the partition and thread
+the seam (`hasrotating`, `rotating_dims`), the face kinds
+(`reflecting_faces`, `outflow_faces`), the partition and thread
 helpers, `tohost` and `samebackend`, and the fields of `Forest`,
 `FieldSet` and `MortonKey` — beside its exports. The list, and why it is
 versioned by exact TreeAMR releases rather than by semantic versioning,
@@ -117,7 +118,7 @@ what cannot be recomputed, and nothing else:
 
 | Item | Handling | Why |
 |---|---|---|
-| Forest: `D`, the geometry type, `roots`, `periodic`, `reflecting`, `rotating`, `extents` (bitwise, in the geometry type), `N` | saved | the inputs the forest was built from |
+| Forest: `D`, the geometry type, `roots`, `periodic`, `reflecting`, `outflow`, `rotating`, `extents` (bitwise, in the geometry type), `N` | saved | the inputs the forest was built from |
 | Forest: the leaf list | saved | the only record of the mesh's history |
 | Forest: `generation` | not saved | a staleness counter, meaningless in another process |
 | Field set: element type, `nvars`, `G`, `centering`, `parity`, `rotation` | saved | its layout |
@@ -333,6 +334,22 @@ a map is checked for its length here and as a map by the field set's.
 The map joins what the ranks agree on about a field set before a save,
 beside the parity.
 
+**Outflow faces** (no format bump). A forest with an outflow face
+(TreeAMR's `outflow` keyword) writes an `outflow` attribute in
+`forest/`, shaped like `reflecting` — `UInt8` of shape `(2, D)`, C's
+`(D, 2)`, one per face — and lists `outflow` in `features`, so that a
+reader from before them refuses the file instead of loading those faces
+as outer ones and filling their ghosts from the hook. A forest without
+one writes neither, so its files are readable by every earlier reader
+of the version, and a file without the attribute loads with no outflow
+face, which is the only reading of its absence. As for the seam, the
+attribute and the feature go together, and a file with one and not the
+other is refused as damaged. Which faces may be outflow is checked by
+the forest's constructor, as a caller's would be. The reflecting and
+outflow faces are read from the forest through TreeAMR's
+`reflecting_faces` and `outflow_faces`, since the forest stores the kind
+of each face in one field.
+
 **Element types**.
 
 - **Native types** — `Float16`, `Float32`, `Float64`, the signed and
@@ -378,7 +395,9 @@ with the reason, and defaults are supplied where they are obvious.
   Zarr v3's `must_understand` idea, with every listed feature
   must-understand: what may be ignored is simply not listed. Version 1
   lists one, `brick`. M12 adds `rotating`, listed only by a file whose
-  forest has the seam (see "Rotating forests" above).
+  forest has the seam (see "Rotating forests" above), and outflow faces
+  add `outflow`, listed only by a file whose forest has one (see
+  "Outflow faces" above).
 - **Refusals are `ArgumentError`s that say why.** They name the TreeAMR
   version that wrote the file, from `provenance`, and point to
   `checkpoint_environment(path, dir)`. That writes the stored

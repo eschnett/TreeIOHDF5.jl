@@ -72,7 +72,7 @@ application's own that are not plain data.
 # What is saved
 
 What cannot be recomputed, and nothing else: the forest's parameters
-(`D`, `N`, the roots, `periodic`, `reflecting`, `rotating`, the extents
+(`D`, `N`, the roots, `periodic`, `reflecting`, `outflow`, `rotating`, the extents
 bit for bit in the geometry type) and its leaf list, in curve order; and
 for each field set its element type, `nvars`, `G`, centering, parity and
 rotation, and its **owned** points, in state-vector layout. Not saved:
@@ -85,7 +85,8 @@ the operators are from the application's own. A forest with a rotating
 seam (M12) is recorded by the feature `rotating` in the file, so that a
 TreeAMR from before M12 refuses the file rather than load the seam as
 two outer faces; a file without a seam does not list it, and stays
-readable by every earlier reader of its format version. Beside the leaf
+readable by every earlier reader of its format version. Outflow faces
+are recorded the same way, by the feature `outflow`. Beside the leaf
 list and each field set go CRC-32C checksums, one over the leaf list and
 one per block, which `load_checkpoint` verifies (added in M7, after a
 parallel file came back damaged; a file without them loads unchecked).

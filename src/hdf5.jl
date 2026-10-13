@@ -55,10 +55,17 @@ const READ_VERSIONS = (1, 2)
 # `rotating` (M12) is listed only by a file whose forest has a rotating
 # seam, so that a reader from before M12 refuses that file instead of
 # loading the seam as two outer faces, and still reads every other one.
-const FEATURES = ("brick", "rotating")
+# `outflow` is listed only by a file whose forest has an outflow face,
+# for the same reason: a reader without it would load those faces as
+# outer ones, and fill their ghosts from the hook.
+const FEATURES = ("brick", "rotating", "outflow")
+
+hasoutflow(forest::Forest) = any(f -> any(f), outflow_faces(forest))
 
 # The features a file over `forest` lists.
-features_of(forest::Forest) = hasrotating(forest) ? ["brick", "rotating"] : ["brick"]
+features_of(forest::Forest) =
+    ["brick"; hasrotating(forest) ? ["rotating"] : String[];
+     hasoutflow(forest) ? ["outflow"] : String[]]
 
 # --- element types -------------------------------------------------------
 
@@ -675,8 +682,14 @@ function write_forest(root, forest::Forest{D,R}) where {D,R}
         write_attribute(g, "roots", Int64[forest.roots...])
         write_attribute(g, "periodic", UInt8[forest.periodic...])
         # (lo, hi) per dimension: a (2, D) array, which C sees as (D, 2).
-        write_attribute(g, "reflecting",
-                        UInt8[forest.reflecting[d][s] for s in 1:2, d in 1:D])
+        reflecting = reflecting_faces(forest)
+        write_attribute(g, "reflecting", UInt8[reflecting[d][s] for s in 1:2, d in 1:D])
+        # The outflow faces, shaped like `reflecting`, only where there are
+        # any: their absence is the only reading a file without them has.
+        if hasoutflow(forest)
+            outflow = outflow_faces(forest)
+            write_attribute(g, "outflow", UInt8[outflow[d][s] for s in 1:2, d in 1:D])
+        end
         # The rotating seam's pair `(d1, d2)` (M12), only where there is one:
         # its absence is the only reading a file without it has.
         hasrotating(forest) &&
@@ -736,6 +749,7 @@ function read_forest(g, ::Val{D}, types, context, comm, version, features) where
     periodic = read_flags(g, "periodic", (D,), note)
     reflecting = read_flags(g, "reflecting", (2, D), note)
     rotating = read_rotating(g, "rotating" in features, note)
+    outflow = read_outflow(g, "outflow" in features, D, note)
     R, F, limbs = read_typeattrs(g, GEOMETRY_ATTRS, types, "the forest's geometry",
                                  context)
     extents = read_array!(Matrix{R}(undef, 2, D), g["extents"], F, (limbs..., 2, D),
@@ -769,6 +783,9 @@ function read_forest(g, ::Val{D}, types, context, comm, version, features) where
                      reflecting=ntuple(D) do d
                          (reflecting[1, d] == 1, reflecting[2, d] == 1)
                      end,
+                     outflow=ntuple(D) do d
+                         (outflow[1, d] == 1, outflow[2, d] == 1)
+                     end,
                      rotating=rotating,
                      extents=ntuple(d -> (extents[1, d], extents[2, d]), D),
                      leaves=leaves, comm=comm)
@@ -796,6 +813,26 @@ function read_rotating(g, listed::Bool, note)
         "the forest's rotating seam, $(repr(pair)), is not a pair of dimensions: the " *
         "file is damaged. " * note))
     return (Int(pair[1]), Int(pair[2]))
+end
+
+# The outflow faces as a (2, D) array of 0 and 1, all 0 for a forest
+# without any. As for the rotating seam, the attribute and the feature go
+# together, and a file with one and not the other is refused as damaged.
+# Which faces may be outflow is checked by the forest, as a caller's
+# would be.
+function read_outflow(g, listed::Bool, D::Integer, note)
+    if !hasattr(g, "outflow")
+        listed && throw(ArgumentError(
+            "the file lists the feature \"outflow\", but its forest has no `outflow` " *
+            "attribute, the faces that are outflow, which every file with the " *
+            "feature stores: the file is damaged. " * note))
+        return zeros(UInt8, 2, D)
+    end
+    listed || throw(ArgumentError(
+        "the forest has outflow faces, but the file does not list the feature " *
+        "\"outflow\", which every file with an outflow face lists so that a reader " *
+        "that does not know it refuses the file: the file is damaged. " * note))
+    return read_flags(g, "outflow", (2, D), note)
 end
 
 # --- field sets ------------------------------------------------------------

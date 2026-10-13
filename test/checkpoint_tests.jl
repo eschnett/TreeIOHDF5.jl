@@ -55,7 +55,7 @@ const PART = "TreeAMR.jl/parts/0000"
 
 # The cases: every centering in every dimension, in the element types
 # (geometry, field) and the face kinds, so that every type meets
-# reflecting parity, periodic wrap and an outer hook. The last type pair
+# reflecting parity, periodic wrap, an outflow face and an outer hook. The last type pair
 # is a field set narrower than its geometry, the one case where the two
 # element types differ. In D = 1 there are only two centerings, so each
 # runs in all four type pairs, against all four face kinds; in D = 2
@@ -66,10 +66,10 @@ const ROUNDTRIP_TYPES = ((Float64, Float64), (Float32, Float32), (Float32x2, Flo
                          (Float64, Float32))
 const ROUNDTRIP_KINDS = Dict(
     1 => ((:periodic,), (:reflect_lo,), (:outer,), (:reflect_both,)),
-    2 => ((:reflect_lo, :outer), (:periodic, :reflect_hi), (:outer, :periodic),
+    2 => ((:reflect_lo, :outer), (:periodic, :reflect_hi), (:outflow_lo, :periodic),
           (:reflect_both, :outer)),
     3 => ((:reflect_lo, :outer, :periodic), (:outer, :reflect_hi, :periodic),
-          (:periodic, :periodic, :reflect_lo), (:outer, :outer, :reflect_both)))
+          (:outflow_both, :periodic, :reflect_lo), (:outer, :outer, :reflect_both)))
 
 function roundtrip_cases()
     cases = []
@@ -102,9 +102,7 @@ end
     ops = Operators(prolongation=p, restriction=p)
     forest = faces_forest(kinds; T=R, N=D == 3 ? 4 : 8)
     f, parity = parity_data(T, kinds, p)
-    reflects = any(forest.reflecting) do r
-        r[1] || r[2]
-    end
+    reflects = any(r -> r[1] || r[2], TreeAMR.reflecting_faces(forest))
     fs = FieldSet{T}(forest, 2; G=ghosts_for(C, p), centering=C,
                      parity=reflects ? parity : nothing)
     fill_by_coordinates!(f, fs)
@@ -129,7 +127,7 @@ end
     @test ck.forest.roots == forest.roots
     @test ck.forest.N == forest.N
     @test ck.forest.periodic == forest.periodic
-    @test ck.forest.reflecting == forest.reflecting
+    @test ck.forest.faces == forest.faces
     @test ck.forest.extents === forest.extents                 # bitwise, in R
     @test floattype(ck.forest) === R
     @test loaded.forest === ck.forest
@@ -403,7 +401,7 @@ file_features(path) = h5open(file -> read_attribute(file["TreeAMR.jl"], "feature
     @test ck.forest.rotating == forest.rotating
     @test TreeAMR.rotating_dims(ck.forest) == (1, 2)
     @test ck.forest.leaves == forest.leaves
-    @test ck.forest.reflecting == forest.reflecting
+    @test ck.forest.faces == forest.faces
     loaded = map(n -> ck.fieldsets[n].fieldset, names)
     for (fs, back, n, u) in zip(sets, loaded, names, states)
         @test back.rotation == fs.rotation
@@ -537,6 +535,45 @@ end
         gather!(u′, y)
         @test bytes(u′) == bytes(u)
     end
+end
+
+@testset "An outflow file lists its feature, and one that hides it is refused" begin
+    # The failure: a file with outflow faces read by a reader that does
+    # not know them, which would load them as outer faces and fill their
+    # ghosts from the hook; or a file whose faces and feature disagree,
+    # read anyway. A file without outflow faces lists nothing new, so
+    # every earlier reader of its format version still reads it.
+    forest = Forest((2, 2); N=4, reflecting=((true, false), (false, false)),
+                    outflow=((false, true), (true, true)))
+    dir = mktempdir()
+    path = joinpath(dir, "outflow.h5")
+    save_checkpoint(path, forest; fieldsets=(), application="Outflow" => 1)
+    @test file_features(path) == ["brick", "outflow"]
+    back = load_checkpoint(path).forest
+    @test back.faces == forest.faces
+    @test TreeAMR.outflow_faces(back) == ((false, true), (true, true))
+    plain = joinpath(dir, "plain.h5")
+    save_checkpoint(plain, Forest((2, 2); N=4, reflecting=((true, false), (false, false)));
+                    fieldsets=(), application="Outflow" => 1)
+    @test file_features(plain) == ["brick"]
+    @test TreeAMR.outflow_faces(load_checkpoint(plain).forest) ==
+          ((false, false), (false, false))
+
+    unlisted = edited_copy(path, "unlisted.h5") do file
+        replace_attribute!(file["TreeAMR.jl"], "features", ["brick"])
+    end
+    @test_throws "does not list the feature \"outflow\"" load_checkpoint(unlisted)
+    faceless = edited_copy(path, "faceless.h5") do file
+        delete_attribute(file["TreeAMR.jl/forest"], "outflow")
+    end
+    @test_throws "lists the feature \"outflow\", but its forest has no" (
+        load_checkpoint(faceless))
+    # The faces as stored are checked by the forest: one that is both
+    # reflecting and outflow.
+    both = edited_copy(path, "both.h5") do file
+        replace_attribute!(file["TreeAMR.jl/forest"], "outflow", UInt8[1 0; 1 1])
+    end
+    @test_throws "both reflecting and outflow" load_checkpoint(both)
 end
 
 @testset "A rotating file without its feature or its seam is refused, saying why" begin
@@ -1043,7 +1080,7 @@ const FIXTURES = joinpath(@__DIR__, "fixtures")
         path = joinpath(FIXTURES, "checkpoint-v1-$name.h5")
         ck = load_checkpoint(app -> read_plain(app, "extra"), path; types=(Float32x2,))
         @test ck.forest.leaves == forest.leaves
-        @test ck.forest.reflecting == forest.reflecting
+        @test ck.forest.faces == forest.faces
         @test bytes(ck.fieldsets["u"].state) == want(u)
         @test bytes(ck.fieldsets["w"].state) == want(w)
         @test ck.fieldsets["w"].fieldset.parity == w.parity

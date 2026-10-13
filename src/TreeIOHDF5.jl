@@ -24,7 +24,7 @@ using TreeAMR
 using TreeAMR: threaded_foreach, tohost, samebackend, Communicator, commrank, commsize,
                allgather, allgatherv, bcast, commnodes, isend, irecv, waitall,
                equalsplit, equalsplit_part, ForestDigest, digest_verdict, layouthash,
-               hasrotating, rotating_dims
+               hasrotating, rotating_dims, reflecting_faces, outflow_faces
 
 export save_checkpoint, load_checkpoint, write_plain, read_plain, checkpoint_environment
 

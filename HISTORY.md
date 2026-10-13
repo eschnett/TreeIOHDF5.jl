@@ -30,6 +30,12 @@ extension was not loaded. The move kept the file format, and added the
 provenance field `treeiohdf5_version`. The test that the functions say
 to load HDF5 when it is not loaded went with the error hint.
 
+Outflow faces came to TreeAMR on 2026-10-13 (TreeAMR's `HISTORY.md`,
+"Domain and boundaries"), stored with the reflecting faces in one field
+of face kinds, so the field this package read, `forest.reflecting`, went
+away; it reads `reflecting_faces` and `outflow_faces` instead, and its
+files gained the `outflow` attribute and feature.
+
 ## Checkpoint and restart
 
 *(Designed 2026-09-29 as M9a, before implementation, and decided with
