@@ -1,16 +1,19 @@
 # TreeIOHDF5.jl
 
-Checkpoint and restart for [TreeAMR](https://github.com/eschnett/TreeAMR.jl)
-meshes, through HDF5. A long run stops and resumes: `save_checkpoint`
-writes the mesh, the evolved fields and the application's own run state,
-and `load_checkpoint` reads them back exactly in a new process, on any
-thread count, rank count or backend; the run then continues bit for bit.
-Only what cannot be recomputed is stored: the leaves, and the fields
-without their ghost zones.
+Checkpoint and restart for
+[TreeAMR](https://github.com/eschnett/TreeAMR.jl) meshes, through
+HDF5. A function `save_checkpoint` writes the mesh, the evolved fields
+and the application's state, and `load_checkpoint` reads them back in.
+This works on any thread count, MPI rank count, or accelerator
+backend. This stores only data which cannot be recomputed: the leaves
+of the mesh tree and the fields without their ghost zones.
+
+[![CI](https://github.com/eschnett/TreeIOHDF5.jl/actions/workflows/CI.yml/badge.svg)](https://github.com/eschnett/TreeIOHDF5.jl/actions/workflows/CI.yml)
+[![Documentation](https://img.shields.io/badge/docs-dev-blue.svg)](https://eschnett.github.io/TreeIOHDF5.jl/dev)
+[![codecov](https://codecov.io/gh/eschnett/TreeIOHDF5.jl/graph/badge.svg)](https://codecov.io/gh/eschnett/TreeIOHDF5.jl)
 
 See [CODE.md](CODE.md) for the file format and the design,
-[PLAN.md](PLAN.md) for what comes next and [HISTORY.md](HISTORY.md) for
-how it got here.
+[PLAN.md](PLAN.md) for what comes next.
 
 **Contents**
 
@@ -20,17 +23,13 @@ how it got here.
 
 ## Status
 
-The checkpoints were part of TreeAMR (its milestone M9a, and over MPI its
-M7) until TreeAMR 0.2, and moved here unchanged: files written by
-TreeAMR's own HDF5 extension load as they did. Serially a checkpoint is
-one HDF5 file; over MPI it is an index and one part file per I/O process,
-none of them written or opened by more than one process, and every
-checkpoint carries checksums that a load verifies.
+For a serial simulation, a checkpoint is one HDF5 file. With MPI,
+there is an index file and a "part" file for every I/O process. There
+are checksums to guard against silent I/O errors. (We were bitten.)
 
 TreeIOHDF5 is a *companion package* of TreeAMR: it uses TreeAMR's
 internals, so it accepts only the TreeAMR versions it was tested against
-(TreeAMR's `CODE.md`, "Companion interface"). Neither TreeIOHDF5 nor
-TreeAMR 0.2 is registered yet.
+(TreeAMR's `CODE.md`, "Companion interface").
 
 ## Example
 
