@@ -130,7 +130,9 @@ The jobs write SimWatch status files through `bench/simwatch.sh`.
 
 ## Repository facts
 
-- No remote yet; `main` is the only branch, and nothing is registered.
+- Remote: `github.com/eschnett/TreeIOHDF5.jl`, branches `main` and
+  `gh-pages`. 0.1.0 is the first version registered in General; TagBot
+  tags each registered version with the `DOCUMENTER_KEY` deploy key.
   Work on a branch, and do not commit, push, tag or register without
   being asked.
 - The test helpers `oracles.jl`, `ghost_oracles.jl`, `wave.jl` and

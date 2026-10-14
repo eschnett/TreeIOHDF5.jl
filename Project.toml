@@ -17,5 +17,5 @@ KernelAbstractions = "0.9.42, 1"
 # which TreeAMR's semantic versioning does not cover (TreeAMR's `CODE.md`,
 # "Companion interface"). Append a version once this package's suite has
 # passed against it.
-TreeAMR = "=0.2.0"
+TreeAMR = "=0.2.1"
 julia = "1.11"

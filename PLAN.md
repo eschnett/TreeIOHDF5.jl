@@ -6,9 +6,10 @@
 
 ## Release 0.1.0
 
-1. **Register.** TreeAMR 0.2.0 is registered, and the repository
-   exists; what is left is its Codecov token and its `DOCUMENTER_KEY`,
-   then tag and register 0.1.0 with `[compat] TreeAMR = "=0.2.0"`. *Done when* CI is
+1. **Register.** TreeAMR 0.2.1 is registered, and the repository
+   exists with its Codecov token; what is left is its `DOCUMENTER_KEY`,
+   then tag and register 0.1.0 with `[compat] TreeAMR = "=0.2.1"` (alone:
+   the outflow faces use names 0.2.1 added). *Done when* CI is
    green on GitHub and the package resolves from General.
 2. **The downstreams.** Neither is changed yet; each needs, on a branch
    of its own, and then a release:

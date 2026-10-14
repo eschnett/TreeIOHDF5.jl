@@ -10,7 +10,7 @@ M9a, distributed in its M7 step 6b); how it got here is in
 [HISTORY.md](HISTORY.md), and TreeAMR's milestone records are in
 [TreeAMR's HISTORY.md](https://github.com/eschnett/TreeAMR.jl/blob/main/HISTORY.md#milestones).
 
-**Status.** Implemented, and tested against TreeAMR 0.2.0; not yet
+**Status.** Implemented, and tested against TreeAMR 0.2.1; not yet
 registered (see [PLAN.md](PLAN.md)).
 
 **Contents**
