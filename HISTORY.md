@@ -12,6 +12,7 @@ records are in
 **Contents**
 
 - [The split from TreeAMR](#the-split-from-treeamr)
+- [The Julia floor](#the-julia-floor)
 - [Checkpoint and restart](#checkpoint-and-restart)
 - [Checkpoints over MPI](#checkpoints-over-mpi)
   - [Parallel checkpoints](#parallel-checkpoints)
@@ -35,6 +36,26 @@ Outflow faces came to TreeAMR on 2026-10-13 (TreeAMR's `HISTORY.md`,
 of face kinds, so the field this package read, `forest.reflecting`, went
 away; it reads `reflecting_faces` and `outflow_faces` instead, and its
 files gained the `outflow` attribute and feature.
+
+## The Julia floor
+
+The package supported Julia 1.11 and later, TreeAMR's floor, until
+0.1.1; CI tested 1.11 and the latest release, and the documentation was
+built on the latest. On 2026-10-16 Erik raised the floor of all the
+Tree* packages to Julia 1.13, because supporting the earlier versions
+slows development and is not useful at the moment. Release 0.1.2 makes
+that change and accepts TreeAMR 0.2.3, the matching TreeAMR release,
+whose only change is the same floor; nothing else changed. CI and the
+documentation build run on 1.13 only. No code in `src/`, `test/`,
+`docs/` or `bench/` depended on the Julia version.
+
+The rename rule in `CODE.md` ("Rules that span several files") gave
+1.11 as the reason not to use `mv(…; force = true)`: there it removed
+the target before renaming. On 1.13 `mv(…; force = true)` tries a plain
+rename first, but when that fails it still removes the target and
+retries, and finally copies; a checkpoint must never be left with
+neither the old file nor the new one, so the rule stands, now without
+the version.
 
 ## Checkpoint and restart
 

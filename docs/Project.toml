@@ -3,8 +3,9 @@ Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
 TreeAMR = "91bc416d-811c-44c1-9bc4-b9c8bbdbbd08"
 TreeIOHDF5 = "49af10b2-b28a-4989-bafa-527ac30d3246"
 
-# TreeAMR 0.2.2 is not registered yet: until it is, take it from the
-# branch of its release PR (eschnett/TreeAMR.jl#22). Remove this once it is.
+# TreeAMR 0.2.3 is not registered yet: until it is, take it from the
+# branch of TreeAMR's release PR for 0.2.3 (eschnett/TreeAMR.jl#23).
+# Remove this once it is.
 [sources]
-TreeAMR = {url = "https://github.com/eschnett/TreeAMR.jl", rev = "eschnett-claude/treeamr-feature-requests-355149"}
+TreeAMR = {url = "https://github.com/eschnett/TreeAMR.jl", rev = "eschnett-claude/drop-julia-pre-1-13-d638a0"}
 TreeIOHDF5 = {path = ".."}
