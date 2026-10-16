@@ -18,5 +18,8 @@ HDF5 = "0.17"
 MPI = "0.20"
 MultiFloats = "3"
 
+# TreeAMR 0.2.2 is not registered yet: until it is, take it from the
+# branch of its release PR (eschnett/TreeAMR.jl#22). Remove this once it is.
 [sources]
+TreeAMR = {url = "https://github.com/eschnett/TreeAMR.jl", rev = "eschnett-claude/treeamr-feature-requests-355149"}
 TreeIOHDF5 = {path = ".."}

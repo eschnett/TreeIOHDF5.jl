@@ -3,6 +3,7 @@
 **Contents**
 
 - [Release 0.1.0](#release-010)
+- [Release 0.1.1](#release-011)
 
 ## Release 0.1.0
 
@@ -40,3 +41,15 @@
 
    *Done when* each downstream's suite passes against the registered
    releases.
+
+## Release 0.1.1
+
+Symmetric walls (TreeAMR's AMR-8) need TreeAMR 0.2.2, which adds
+`FieldSet`'s `walls`, so `[compat] TreeAMR = "=0.2.2"` alone. Until 0.2.2
+is registered, `Project.toml`, `test/Project.toml` and `docs/Project.toml`
+take TreeAMR from the branch of its release PR through `[sources]`.
+
+1. Once TreeAMR 0.2.2 is registered, remove those `[sources]` entries,
+   run the suite against the registered release, then tag and register
+   0.1.1. *Done when* CI is green on GitHub against the registered
+   TreeAMR and the package resolves from General.
