@@ -576,6 +576,37 @@ end
     @test_throws "both reflecting and outflow" load_checkpoint(both)
 end
 
+@testset "Symmetric walls are saved and restored, and a file that hides them is refused" begin
+    # The failure: a set with `walls = :symmetric` restored with half-open
+    # walls, whose fill leaves its low wall planes as they are; or a file
+    # whose sets and feature disagree, read anyway. A file whose sets all
+    # have half-open walls lists nothing new and stores nothing new.
+    forest = Forest((2, 2); N=4, outflow=((true, true), (false, false)))
+    sym = FieldSet(forest, 1; G=1, centering=vertexcentered(2), walls=:symmetric)
+    half = FieldSet(forest, 1; G=1, centering=vertexcentered(2))
+    dir = mktempdir()
+    path = joinpath(dir, "walls.h5")
+    save_checkpoint(path, forest; fieldsets=("sym" => sym, "half" => half),
+                    application="Walls" => 1)
+    @test file_features(path) == ["brick", "outflow", "symmetric_walls"]
+    ck = load_checkpoint(path)
+    @test ck.fieldsets["sym"].fieldset.walls === :symmetric
+    @test ck.fieldsets["half"].fieldset.walls === :half_open
+    plain = joinpath(dir, "plain.h5")
+    save_checkpoint(plain, forest; fieldsets=("half" => half,), application="Walls" => 1)
+    @test file_features(plain) == ["brick", "outflow"]
+    @test !h5open(f -> haskey(attributes(f["TreeAMR.jl/fieldsets/half"]), "walls"), plain)
+
+    unlisted = edited_copy(path, "unlisted.h5") do file
+        replace_attribute!(file["TreeAMR.jl"], "features", ["brick", "outflow"])
+    end
+    @test_throws "does not list the feature \"symmetric_walls\"" load_checkpoint(unlisted)
+    odd = edited_copy(path, "odd.h5") do file
+        replace_attribute!(file["TreeAMR.jl/fieldsets/sym"], "walls", "closed")
+    end
+    @test_throws "has the walls \"closed\"" load_checkpoint(odd)
+end
+
 @testset "A rotating file without its feature or its seam is refused, saying why" begin
     # The failure: a file whose seam and feature disagree, or whose maps
     # are damaged, read anyway — with the seam as two outer faces, or a

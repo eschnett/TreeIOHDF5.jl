@@ -57,15 +57,19 @@ const READ_VERSIONS = (1, 2)
 # loading the seam as two outer faces, and still reads every other one.
 # `outflow` is listed only by a file whose forest has an outflow face,
 # for the same reason: a reader without it would load those faces as
-# outer ones, and fill their ghosts from the hook.
-const FEATURES = ("brick", "rotating", "outflow")
+# outer ones, and fill their ghosts from the hook. `symmetric_walls` is
+# listed only by a file holding a field set with `walls = :symmetric`
+# (TreeAMR's AMR-8): a reader without it would rebuild that set with
+# half-open walls, whose fill leaves the low wall planes as they are.
+const FEATURES = ("brick", "rotating", "outflow", "symmetric_walls")
 
 hasoutflow(forest::Forest) = any(f -> any(f), outflow_faces(forest))
 
-# The features a file over `forest` lists.
-features_of(forest::Forest) =
+# The features a file over `forest` holding the field sets `sets` lists.
+features_of(forest::Forest, sets) =
     ["brick"; hasrotating(forest) ? ["rotating"] : String[];
-     hasoutflow(forest) ? ["outflow"] : String[]]
+     hasoutflow(forest) ? ["outflow"] : String[];
+     any(((_, fs, _),) -> fs.walls === :symmetric, sets) ? ["symmetric_walls"] : String[]]
 
 # --- element types -------------------------------------------------------
 
@@ -864,6 +868,8 @@ function write_layout(parent, name, fs::FieldSet{T,D}) where {T,D}
             write_attribute(g, "parity", [parity_name(p[d]) for d in 1:D, p in fs.parity])
         # The signed variable map of a rotating seam (M12), where there is one.
         fs.rotation === nothing || write_attribute(g, "rotation", Int64[fs.rotation...])
+        # Symmetric walls (AMR-8), where the set has them.
+        fs.walls === :half_open || write_attribute(g, "walls", string(fs.walls))
         write_attribute(g, "range", "owned")
     finally
         close(g)
@@ -874,7 +880,7 @@ end
 # The layout of field set `name` from its group `g` in the index: the
 # element type `T` and how it is stored (`F`, `limbs`), and the arguments
 # of its constructor.
-function read_layout(g, name, ::Val{D}, types, context) where {D}
+function read_layout(g, name, ::Val{D}, types, context, features) where {D}
     note = writer_note(context)
     what = "field set $(repr(name))"
     range = read_attribute(g, "range")
@@ -903,7 +909,20 @@ function read_layout(g, name, ::Val{D}, types, context) where {D}
                 "indices, one per variable: the file is damaged. " * note))
         rotation = Int.(rotation)
     end
-    return (; name=String(name), T, F, limbs, nvars, G, centering, parity, rotation)
+    # Half-open walls unless the set says otherwise. As for the forest's
+    # attributes, the attribute and the feature go together.
+    walls = :half_open
+    if hasattr(g, "walls")
+        walls = Symbol(read_attribute(g, "walls"))
+        walls === :symmetric || throw(ArgumentError(
+            "$what has the walls $(repr(string(walls))), and only \"symmetric\" is " *
+            "stored (half-open walls store nothing): the file is damaged. " * note))
+        "symmetric_walls" in features || throw(ArgumentError(
+            "$what has symmetric walls, but the file does not list the feature " *
+            "\"symmetric_walls\" that a file with them lists: the file is damaged. " *
+            note))
+    end
+    return (; name=String(name), T, F, limbs, nvars, G, centering, walls, parity, rotation)
 end
 
 # How a field set's blocks are stored: the dimensions of one block in the
@@ -1286,6 +1305,7 @@ end
 # shapes the objects created for it.
 set_layout((name, fs, u)) =
     (name, typename(eltype(fs.work)), fs.nvars, fs.G, string.(fs.centering),
+     string(fs.walls),
      fs.parity === nothing ? "" : string(map(p -> map(parity_name, p), fs.parity)),
      fs.rotation === nothing ? "" : string(fs.rotation), u === nothing)
 
@@ -1448,7 +1468,7 @@ function write_index!(file, path, saveid, forest, sets, appname, reports, k, nra
     try
         write_attribute(root, "format", FORMAT)
         write_attribute(root, "format_version", Int64(FORMAT_VERSION))
-        write_attribute(root, "features", features_of(forest))
+        write_attribute(root, "features", features_of(forest, sets))
         write_attribute(root, "application", appname)
         write_attribute(root, "save_id", saveid)
         write_provenance(root, provenance_values(nranks, k))
@@ -1911,13 +1931,14 @@ function load_from(f, meta, real, r::Ranks, path, types, backend, fieldsets)
     n = nleaves(forest)
     group = root["fieldsets"]
     names = select_fieldsets(group, fieldsets, context)
-    layouts = [read_layout(group[name], name, Val(D), types, context) for name in names]
+    layouts = [read_layout(group[name], name, Val(D), types, context, features)
+               for name in names]
     # The constructor validates each layout against the forest, as it
     # would a caller's, and `statevector` places the pages by owner, which
     # is what decides their NUMA domain; the reads below only fill them.
     sets = map(layouts) do l
-        fs = FieldSet{l.T}(forest, l.nvars; G=l.G, centering=l.centering, parity=l.parity,
-                           rotation=l.rotation, backend=backend)
+        fs = FieldSet{l.T}(forest, l.nvars; G=l.G, centering=l.centering, walls=l.walls,
+                           parity=l.parity, rotation=l.rotation, backend=backend)
         return (; fieldset=fs, state=statevector(fs))
     end
     table = read_parttable(root, version, n, names, context)

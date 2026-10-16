@@ -121,7 +121,7 @@ what cannot be recomputed, and nothing else:
 | Forest: `D`, the geometry type, `roots`, `periodic`, `reflecting`, `outflow`, `rotating`, `extents` (bitwise, in the geometry type), `N` | saved | the inputs the forest was built from |
 | Forest: the leaf list | saved | the only record of the mesh's history |
 | Forest: `generation` | not saved | a staleness counter, meaningless in another process |
-| Field set: element type, `nvars`, `G`, `centering`, `parity`, `rotation` | saved | its layout |
+| Field set: element type, `nvars`, `G`, `centering`, `walls`, `parity`, `rotation` | saved | its layout |
 | Field set: the **owned** points, in state-vector layout `(N, …, N, nvars, nblocks)` | saved | the authoritative data |
 | Ghosts, shared vertex planes, the derived wall plane | rebuilt by `scatter!` and `fill_ghosts!` with the application's hook | derived from the owned points |
 | `GhostSchedule`, `InterfaceSchedule`, `Operators`, the parity factors, the rotation tables, a `RotationPair` | rebuilt | derived, or the application's inputs |
@@ -350,6 +350,19 @@ outflow faces are read from the forest through TreeAMR's
 `reflecting_faces` and `outflow_faces`, since the forest stores the kind
 of each face in one field.
 
+**Symmetric walls** (no format bump). A field set built with
+`walls = :symmetric` (TreeAMR's AMR-8, whose fill writes the owned low
+wall plane of a vertex-like dimension at the domain's faces) writes a
+`walls` attribute in `fieldsets/<name>/`, the string `"symmetric"`, and
+the file lists `symmetric_walls` in `features`, so that a reader from
+before them refuses it instead of rebuilding the set with half-open
+walls, whose fill leaves those planes as they are. A set with half-open
+walls writes nothing, so a file of such sets is readable by every
+earlier reader of the version, and a set without the attribute loads
+with half-open walls. A set with the attribute in a file without the
+feature is refused as damaged, as is any value but `"symmetric"`. The
+walls join what the ranks agree on about a field set before a save.
+
 **Element types**.
 
 - **Native types** — `Float16`, `Float32`, `Float64`, the signed and
@@ -397,7 +410,9 @@ with the reason, and defaults are supplied where they are obvious.
   lists one, `brick`. M12 adds `rotating`, listed only by a file whose
   forest has the seam (see "Rotating forests" above), and outflow faces
   add `outflow`, listed only by a file whose forest has one (see
-  "Outflow faces" above).
+  "Outflow faces" above), and symmetric walls `symmetric_walls`, listed
+  only by a file holding a set that has them (see "Symmetric walls"
+  above).
 - **Refusals are `ArgumentError`s that say why.** They name the TreeAMR
   version that wrote the file, from `provenance`, and point to
   `checkpoint_environment(path, dir)`. That writes the stored

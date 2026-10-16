@@ -86,7 +86,9 @@ seam (M12) is recorded by the feature `rotating` in the file, so that a
 TreeAMR from before M12 refuses the file rather than load the seam as
 two outer faces; a file without a seam does not list it, and stays
 readable by every earlier reader of its format version. Outflow faces
-are recorded the same way, by the feature `outflow`. Beside the leaf
+are recorded the same way, by the feature `outflow`, and a field set's
+symmetric walls (`walls = :symmetric`) by the feature `symmetric_walls`.
+Beside the leaf
 list and each field set go CRC-32C checksums, one over the leaf list and
 one per block, which `load_checkpoint` verifies (added in M7, after a
 parallel file came back damaged; a file without them loads unchecked).
