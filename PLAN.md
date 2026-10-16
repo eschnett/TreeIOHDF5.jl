@@ -4,6 +4,7 @@
 
 - [Release 0.1.0](#release-010)
 - [Release 0.1.1](#release-011)
+- [Release 0.1.2](#release-012)
 
 ## Release 0.1.0
 
@@ -52,4 +53,17 @@ take TreeAMR from the branch of its release PR through `[sources]`.
 1. Once TreeAMR 0.2.2 is registered, remove those `[sources]` entries,
    run the suite against the registered release, then tag and register
    0.1.1. *Done when* CI is green on GitHub against the registered
+   TreeAMR and the package resolves from General.
+
+## Release 0.1.2
+
+The Julia floor goes to 1.13 (`HISTORY.md`, "The Julia floor"), with
+TreeAMR 0.2.3, whose only change is the same floor, so
+`[compat] TreeAMR = "=0.2.2, =0.2.3"`. Until 0.2.3 is registered, `Project.toml`,
+`test/Project.toml` and `docs/Project.toml` take TreeAMR from the branch
+of TreeAMR's release PR for 0.2.3 through `[sources]`.
+
+1. Once TreeAMR 0.2.3 is registered, remove those `[sources]` entries,
+   run the suite against the registered release, then tag and register
+   0.1.2. *Done when* CI is green on GitHub against the registered
    TreeAMR and the package resolves from General.

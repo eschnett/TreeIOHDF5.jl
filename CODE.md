@@ -10,8 +10,9 @@ M9a, distributed in its M7 step 6b); how it got here is in
 [HISTORY.md](HISTORY.md), and TreeAMR's milestone records are in
 [TreeAMR's HISTORY.md](https://github.com/eschnett/TreeAMR.jl/blob/main/HISTORY.md#milestones).
 
-**Status.** Implemented, and tested against TreeAMR 0.2.1; not yet
-registered (see [PLAN.md](PLAN.md)).
+**Status.** Implemented, and tested against TreeAMR 0.2.2 and 0.2.3,
+on Julia 1.13; the releases that wait for TreeAMR's are in
+[PLAN.md](PLAN.md).
 
 **Contents**
 
@@ -33,7 +34,9 @@ files and index of "Checkpoints without parallel I/O", the data moved by
 TreeAMR's communicator verbs. MPI is never called here: an `MPI.Comm`
 reaches TreeAMR's MPI extension through `communicator`, and every
 message goes through TreeAMR's verbs. `bench/` holds the throughput
-benchmark and the Symmetry jobs, `test/` the suite.
+benchmark and the Symmetry jobs, `test/` the suite. The package
+supports Julia 1.13 and later, as TreeAMR does, and CI tests 1.13 only
+([HISTORY.md](HISTORY.md#the-julia-floor) has why).
 
 ### The companion interface
 
@@ -67,8 +70,8 @@ it.
   `/TreeAMR.jl` and the application only under its own top-level group,
   leaving the root free for M9b's sidecars. The write goes to
   `path * ".partial"` and is renamed over `path` with
-  `Base.Filesystem.rename` — not `mv(…; force = true)`, which on 1.11
-  removes the target first — and, under the default `sync = true`, the
+  `Base.Filesystem.rename` — not `mv(…; force = true)`, which may
+  remove the target first — and, under the default `sync = true`, the
   partial file is flushed to stable storage before the rename and its
   directory after (`F_FULLFSYNC` on macOS, `fsync` elsewhere), since
   closing a file ends in the page cache and a rename can reach the disk

@@ -38,7 +38,7 @@ this file), and update every reference to a heading you rename.
 
 ## Commands
 
-Full test suite, about 3 min (835 tests; the MPI test's two `mpiexec`
+Full test suite, about 3 min (850 tests; the MPI test's two `mpiexec`
 jobs run beside the suite where the machine has 8+ threads and 24+ GB,
 as in TreeAMR):
 
@@ -138,4 +138,6 @@ The jobs write SimWatch status files through `bench/simwatch.sh`.
 - The test helpers `oracles.jl`, `ghost_oracles.jl`, `wave.jl` and
   `burgers.jl` are verbatim copies of TreeAMR's; the `CODE.md` they cite
   is TreeAMR's.
+- Julia 1.13 is the floor, as for TreeAMR (`HISTORY.md`, "The Julia
+  floor"); CI tests 1.13 only, on Linux and macOS.
 - All `Manifest.toml` files and `docs/build/` are gitignored.
