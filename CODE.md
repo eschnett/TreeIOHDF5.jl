@@ -11,8 +11,7 @@ M9a, distributed in its M7 step 6b); how it got here is in
 [TreeAMR's HISTORY.md](https://github.com/eschnett/TreeAMR.jl/blob/main/HISTORY.md#milestones).
 
 **Status.** Implemented, and tested against TreeAMR 0.2.2 and 0.2.3,
-on Julia 1.13; the releases that wait for TreeAMR's are in
-[PLAN.md](PLAN.md).
+on Julia 1.13; what is left, the downstreams, is in [PLAN.md](PLAN.md).
 
 **Contents**
 
