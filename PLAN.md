@@ -45,25 +45,10 @@
 
 ## Release 0.1.1
 
-Symmetric walls (TreeAMR's AMR-8) need TreeAMR 0.2.2, which adds
-`FieldSet`'s `walls`, so `[compat] TreeAMR = "=0.2.2"` alone. Until 0.2.2
-is registered, `Project.toml`, `test/Project.toml` and `docs/Project.toml`
-take TreeAMR from the branch of its release PR through `[sources]`.
-
-1. Once TreeAMR 0.2.2 is registered, remove those `[sources]` entries,
-   run the suite against the registered release, then tag and register
-   0.1.1. *Done when* CI is green on GitHub against the registered
-   TreeAMR and the package resolves from General.
+Done: symmetric walls, for TreeAMR 0.2.2 (`CODE.md`, "Checkpoint and
+restart"); 850 tests pass against the registered TreeAMR 0.2.2.
 
 ## Release 0.1.2
 
-The Julia floor goes to 1.13 (`HISTORY.md`, "The Julia floor"), with
-TreeAMR 0.2.3, whose only change is the same floor, so
-`[compat] TreeAMR = "=0.2.2, =0.2.3"`. Until 0.2.3 is registered, `Project.toml`,
-`test/Project.toml` and `docs/Project.toml` take TreeAMR from the branch
-of TreeAMR's release PR for 0.2.3 through `[sources]`.
-
-1. Once TreeAMR 0.2.3 is registered, remove those `[sources]` entries,
-   run the suite against the registered release, then tag and register
-   0.1.2. *Done when* CI is green on GitHub against the registered
-   TreeAMR and the package resolves from General.
+Done: the Julia floor of 1.13, for TreeAMR 0.2.2 and 0.2.3 (`HISTORY.md`,
+"The Julia floor"); 850 tests pass against the registered TreeAMR 0.2.3.
