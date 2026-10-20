@@ -5,6 +5,7 @@
 - [Release 0.1.0](#release-010)
 - [Release 0.1.1](#release-011)
 - [Release 0.1.2](#release-012)
+- [Release 0.1.3](#release-013)
 
 ## Release 0.1.0
 
@@ -52,3 +53,9 @@ restart"); 850 tests pass against the registered TreeAMR 0.2.2.
 
 Done: the Julia floor of 1.13, for TreeAMR 0.2.2 and 0.2.3 (`HISTORY.md`,
 "The Julia floor"); 850 tests pass against the registered TreeAMR 0.2.3.
+
+## Release 0.1.3
+
+Done: compat only, for TreeAMR 0.2.4, the cheaper ghost fill on nested
+meshes, which leaves the companion interface unchanged; 850 tests pass
+against the registered TreeAMR 0.2.4.
