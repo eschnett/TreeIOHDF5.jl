@@ -42,7 +42,7 @@ supports Julia 1.13 and later, as TreeAMR does, and CI tests 1.13 only
 TreeIOHDF5 is a companion package of TreeAMR: it provides infrastructure,
 and so it uses TreeAMR's internals — the communicator verbs, the
 cross-rank agreement (`ForestDigest`, `digest_verdict`, `layouthash`),
-the seam (`hasrotating`, `rotating_dims`), the face kinds
+the seam (`hasrotating`, `rotating_dims`, `ishalfturn`, `halfturn_dims`), the face kinds
 (`reflecting_faces`, `outflow_faces`), the partition and thread
 helpers, `tohost` and `samebackend`, and the fields of `Forest`,
 `FieldSet` and `MortonKey` — beside its exports. The list, and why it is
@@ -120,7 +120,7 @@ what cannot be recomputed, and nothing else:
 
 | Item | Handling | Why |
 |---|---|---|
-| Forest: `D`, the geometry type, `roots`, `periodic`, `reflecting`, `outflow`, `rotating`, `extents` (bitwise, in the geometry type), `N` | saved | the inputs the forest was built from |
+| Forest: `D`, the geometry type, `roots`, `periodic`, `reflecting`, `outflow`, `rotating` or `halfturn`, `extents` (bitwise, in the geometry type), `N` | saved | the inputs the forest was built from |
 | Forest: the leaf list | saved | the only record of the mesh's history |
 | Forest: `generation` | not saved | a staleness counter, meaningless in another process |
 | Field set: element type, `nvars`, `G`, `centering`, `walls`, `parity`, `rotation` | saved | its layout |
@@ -336,6 +336,13 @@ a map is checked for its length here and as a map by the field set's.
 The map joins what the ranks agree on about a field set before a save,
 beside the parity.
 
+A forest with a half-turn seam (TreeAMR's M13) is saved the same way
+under its own names: a `halfturn` attribute in `forest/`, the pair
+`(d1, d2)`, each field set's `halfturn` map in `fieldsets/<name>/`, and
+the feature `halfturn`, so that a reader from before it refuses the file
+rather than load the seam as an outer face. A file has at most one of
+the two pairs; the forest refuses both, as it refuses a caller.
+
 **Outflow faces** (no format bump). A forest with an outflow face
 (TreeAMR's `outflow` keyword) writes an `outflow` attribute in
 `forest/`, shaped like `reflecting` — `UInt8` of shape `(2, D)`, C's
@@ -410,7 +417,9 @@ with the reason, and defaults are supplied where they are obvious.
   Zarr v3's `must_understand` idea, with every listed feature
   must-understand: what may be ignored is simply not listed. Version 1
   lists one, `brick`. M12 adds `rotating`, listed only by a file whose
-  forest has the seam (see "Rotating forests" above), and outflow faces
+  forest has the seam (see "Rotating forests" above), TreeAMR's M13
+  `halfturn`, listed only by a file whose forest has a half-turn seam
+  (the same section), and outflow faces
   add `outflow`, listed only by a file whose forest has one (see
   "Outflow faces" above), and symmetric walls `symmetric_walls`, listed
   only by a file holding a set that has them (see "Symmetric walls"

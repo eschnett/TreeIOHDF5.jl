@@ -72,10 +72,10 @@ application's own that are not plain data.
 # What is saved
 
 What cannot be recomputed, and nothing else: the forest's parameters
-(`D`, `N`, the roots, `periodic`, `reflecting`, `outflow`, `rotating`, the extents
+(`D`, `N`, the roots, `periodic`, `reflecting`, `outflow`, `rotating` or `halfturn`, the extents
 bit for bit in the geometry type) and its leaf list, in curve order; and
-for each field set its element type, `nvars`, `G`, centering, parity and
-rotation, and its **owned** points, in state-vector layout. Not saved:
+for each field set its element type, `nvars`, `G`, centering, parity,
+rotation and half-turn map, and its **owned** points, in state-vector layout. Not saved:
 the ghosts, the shared boundary planes of a vertex-like dimension and
 the derived wall planes, all of which `fill_ghosts!` rebuilds
 from the owned points with the application's own operators and hook;
@@ -85,7 +85,8 @@ the operators are from the application's own. A forest with a rotating
 seam (M12) is recorded by the feature `rotating` in the file, so that a
 TreeAMR from before M12 refuses the file rather than load the seam as
 two outer faces; a file without a seam does not list it, and stays
-readable by every earlier reader of its format version. Outflow faces
+readable by every earlier reader of its format version. A half-turn seam
+(TreeAMR's M13) is recorded the same way, by the feature `halfturn`. Outflow faces
 are recorded the same way, by the feature `outflow`, and a field set's
 symmetric walls (`walls = :symmetric`) by the feature `symmetric_walls`.
 Beside the leaf
