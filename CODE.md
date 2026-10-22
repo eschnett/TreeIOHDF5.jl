@@ -336,7 +336,7 @@ a map is checked for its length here and as a map by the field set's.
 The map joins what the ranks agree on about a field set before a save,
 beside the parity.
 
-A forest with a half-turn seam (TreeAMR's M13) is saved the same way
+A forest with a half-turn seam (TreeAMR's M14) is saved the same way
 under its own names: a `halfturn` attribute in `forest/`, the pair
 `(d1, d2)`, each field set's `halfturn` map in `fieldsets/<name>/`, and
 the feature `halfturn`, so that a reader from before it refuses the file
@@ -417,7 +417,7 @@ with the reason, and defaults are supplied where they are obvious.
   Zarr v3's `must_understand` idea, with every listed feature
   must-understand: what may be ignored is simply not listed. Version 1
   lists one, `brick`. M12 adds `rotating`, listed only by a file whose
-  forest has the seam (see "Rotating forests" above), TreeAMR's M13
+  forest has the seam (see "Rotating forests" above), TreeAMR's M14
   `halfturn`, listed only by a file whose forest has a half-turn seam
   (the same section), and outflow faces
   add `outflow`, listed only by a file whose forest has one (see

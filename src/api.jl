@@ -86,7 +86,7 @@ seam (M12) is recorded by the feature `rotating` in the file, so that a
 TreeAMR from before M12 refuses the file rather than load the seam as
 two outer faces; a file without a seam does not list it, and stays
 readable by every earlier reader of its format version. A half-turn seam
-(TreeAMR's M13) is recorded the same way, by the feature `halfturn`. Outflow faces
+(TreeAMR's M14) is recorded the same way, by the feature `halfturn`. Outflow faces
 are recorded the same way, by the feature `outflow`, and a field set's
 symmetric walls (`walls = :symmetric`) by the feature `symmetric_walls`.
 Beside the leaf

@@ -6,6 +6,7 @@
 - [Release 0.1.1](#release-011)
 - [Release 0.1.2](#release-012)
 - [Release 0.1.3](#release-013)
+- [Release 0.1.4](#release-014)
 
 ## Release 0.1.0
 
@@ -56,9 +57,14 @@ Done: the Julia floor of 1.13, for TreeAMR 0.2.2 and 0.2.3 (`HISTORY.md`,
 
 ## Release 0.1.3
 
-The half-turn seam, for TreeAMR 0.2.4 (TreeAMR's M13; `CODE.md`,
+Done: compat only, for TreeAMR 0.2.4, the cheaper ghost fill on nested
+meshes, which leaves the companion interface unchanged; 850 tests pass
+against the registered TreeAMR 0.2.4.
+
+## Release 0.1.4
+
+The half-turn seam, for TreeAMR 0.2.5 (TreeAMR's M14; `CODE.md`,
 "Rotating forests"): the forest's `halfturn` pair under a feature of its
-own and each field set's `halfturn` map. 889 tests pass against the
-TreeAMR checkout of 0.2.4. *Done when* TreeAMR 0.2.4 is registered, the
-suite passes against it, and 0.1.3 is tagged and registered with
-`=0.2.4` in its `[compat]`.
+own and each field set's `halfturn` map. *Done when* TreeAMR 0.2.5 is
+registered, the suite passes against it, and 0.1.4 is tagged and
+registered with `=0.2.5` in its `[compat]`.

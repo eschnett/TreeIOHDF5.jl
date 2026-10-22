@@ -61,7 +61,7 @@ const READ_VERSIONS = (1, 2)
 # listed only by a file holding a field set with `walls = :symmetric`
 # (TreeAMR's AMR-8): a reader without it would rebuild that set with
 # half-open walls, whose fill leaves the low wall planes as they are.
-# `halfturn` (TreeAMR's M13) is listed only by a file whose forest has a
+# `halfturn` (TreeAMR's M14) is listed only by a file whose forest has a
 # half-turn seam, for the same reason as `rotating`: a reader without it
 # would load the seam as an outer face, and the field sets without their
 # maps.
@@ -700,7 +700,7 @@ function write_forest(root, forest::Forest{D,R}) where {D,R}
             write_attribute(g, "outflow", UInt8[outflow[d][s] for s in 1:2, d in 1:D])
         end
         # The rotating seam's pair `(d1, d2)` (M12), or the half turn's
-        # (TreeAMR's M13), only where there is one: its absence is the only
+        # (TreeAMR's M14), only where there is one: its absence is the only
         # reading a file without it has.
         hasrotating(forest) &&
             (ishalfturn(forest) ?
@@ -804,7 +804,7 @@ function read_forest(g, ::Val{D}, types, context, comm, version, features) where
                      leaves=leaves, comm=comm)
 end
 
-# The rotating seam's pair (M12), or the half turn's (TreeAMR's M13), as
+# The rotating seam's pair (M12), or the half turn's (TreeAMR's M14), as
 # `name` says, `nothing` for a forest without one. The attribute and the
 # feature of the same name go together: a file with one and not the other
 # was not written by any TreeAMR, and is refused rather than read with or
@@ -879,7 +879,7 @@ function write_layout(parent, name, fs::FieldSet{T,D}) where {T,D}
             write_attribute(g, "parity", [parity_name(p[d]) for d in 1:D, p in fs.parity])
         # The signed variable map of a rotating seam (M12), where there is one.
         fs.rotation === nothing || write_attribute(g, "rotation", Int64[fs.rotation...])
-        # And of a half-turn seam (TreeAMR's M13).
+        # And of a half-turn seam (TreeAMR's M14).
         fs.halfturn === nothing || write_attribute(g, "halfturn", Int64[fs.halfturn...])
         # Symmetric walls (AMR-8), where the set has them.
         fs.walls === :half_open || write_attribute(g, "walls", string(fs.walls))

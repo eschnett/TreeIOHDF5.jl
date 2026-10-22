@@ -666,7 +666,7 @@ end
     @test_throws "so the field set needs `rotation`" load_checkpoint(mapless)
 end
 
-# --- half turns (TreeAMR's M13) -------------------------------------------------
+# --- half turns (TreeAMR's M14) -------------------------------------------------
 #
 # A half-turn seam is saved as its pair under its own feature, and every
 # field set's `halfturn` map with it; a reader that drops either loads the

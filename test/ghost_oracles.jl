@@ -1405,7 +1405,7 @@ function rotating_regrid_vs_quadrupled(::Val{D}; rotating, other=:periodic, N=8,
     return results
 end
 
-# --- M13: half turns (TreeAMR) ------------------------------------------------
+# --- M14: half turns (TreeAMR) ------------------------------------------------
 #
 # The half plane and its data, copied from TreeAMR's `ghost_oracles.jl`.
 
