@@ -1404,3 +1404,109 @@ function rotating_regrid_vs_quadrupled(::Val{D}; rotating, other=:periodic, N=8,
     end
     return results
 end
+
+# --- M14: half turns (TreeAMR) ------------------------------------------------
+#
+# The half plane and its data, copied from TreeAMR's `ghost_oracles.jl`.
+
+# The data: a scalar invariant under the half turn `(a, b) ↦ (−a, −b)`
+# about the axis, and a vector that it negates, both in the coordinates
+# about the axis and neither covariant under a quarter turn nor under a
+# mirror, so that a quarter turn's tables or a reflection's would show.
+# The half plane spans `[0, 2] × [−2, 2]` in its plane, the axis at the
+# origin, and the full plane `[−2, 2]²`.
+
+"""
+The signed map of a half turn for a scalar followed by a vector's
+components in Cartesian order: the components in the plane negated,
+written from the definition, `v(Pp) = P v(p)`.
+"""
+vector_halfturn(D, (d1, d2)) = [1; [e == d1 || e == d2 ? -(1 + e) : 1 + e for e in 1:D]]
+
+"""The half-turn-invariant scalar at `(a, b)`; `poly = p` as for [`invariant_scalar`](@ref)."""
+function halfturn_scalar(a, b; poly::Int=0)
+    c = literal(a)
+    if poly > 0
+        q = poly > 2 ? a^2 - c(0.5) * b^2 : zero(a)
+        return c(1.3) + c(0.1) * a * b + c(0.4) * q
+    end
+    return exp(c(-0.4) * (a * a + b * b)) + c(0.3) * sin(c(0.7) * a * b + c(0.2)) +
+           c(0.2) * cos(c(0.5) * (a * a - c(0.6) * b * b))
+end
+
+"""
+The vector field `(v_a, v_b)` at `(a, b)` that the half turn negates: a
+matrix of invariants times `(a, b)`; `poly = p` keeps it of degree `< p`
+per dimension.
+"""
+function halfturn_vector(a, b; poly::Int=0)
+    c = literal(a)
+    if poly > 0
+        return c(0.8) * a - c(0.6) * b + (poly > 3 ? c(0.2) * a^3 : zero(a)),
+               c(0.3) * a + c(0.9) * b + (poly > 2 ? c(0.1) * a^2 * b : zero(a))
+    end
+    s = halfturn_scalar(a, b)
+    t = cos(c(0.8) * a * b) + c(0.4) * sin(c(0.3) * (a * a - b * b))
+    return s * a - c(0.6) * t * b + c(0.2) * a * b * a, c(0.3) * t * a + c(0.9) * s * b
+end
+
+"""
+A scalar and a vector, as [`vector_halfturn`](@ref) orders them, as
+`f(x, v)`, the third dimension's factor as for [`rotating_data`](@ref).
+"""
+function halfturn_data(D, plane, other; poly::Int=0)
+    d1, d2 = plane
+    z = outofplane(D, plane)
+    kind = Val(other)
+    return function (x, v)
+        o = valsymbol(kind)
+        a, b = x[d1], x[d2]
+        v == 1 && return halfturn_scalar(a, b; poly=poly) *
+                         outofplane_factor(x, D, plane, o, false; poly=poly)
+        e = v - 1
+        if e == z
+            c = literal(a)
+            return (c(0.9) + c(0.2) * halfturn_scalar(a, b; poly=min(poly, 3))) *
+                   outofplane_factor(x, D, plane, o, true; poly=poly)
+        end
+        va, vb = halfturn_vector(a, b; poly=poly)
+        return (e == d1 ? va : vb) * outofplane_factor(x, D, plane, o, false; poly=poly)
+    end
+end
+
+"""
+The refinement both the half plane and the full plane get, as a function
+of a block's centre and level: symmetric under both mirrors of the plane,
+so under the half turn and with the seam conforming in the full plane by
+symmetry. It reaches the axis with levels 2, 1 and 0 side by side along
+the seam, and refines a spot on the seam away from the axis; in 3D it
+stops halfway up the third dimension.
+"""
+function halfturn_refinement(D, plane)
+    d1, d2 = plane
+    z = outofplane(D, plane)
+    low(c, r) = D == 2 || c[z] < r
+    spot(c) = hypot(abs(c[d1]) - 0.3, abs(c[d2]) - 1.3) < 0.45
+    return (c, lvl) -> (lvl == 0 && (hypot(c[d1], c[d2]) < 1.2 || spot(c)) &&
+                        low(c, 1.0)) ||
+                       (lvl == 1 && hypot(c[d1], c[d2]) < 0.6 && low(c, 0.5))
+end
+
+"""
+The half plane, `[0, 2]` along `d1` (2 roots), `[−2, 2]` along `d2` (4
+roots) and `[0, 2]` along the third dimension (2 roots, `other`),
+refined by [`halfturn_refinement`](@ref) unless `refine = false`; with
+`full = true` the full plane, `[−2, 2]` along `d1` too, without the seam.
+"""
+function halfturn_forest(::Val{D}; plane, other=:periodic, T::Type=Float64, N=8,
+                         full::Bool=false, refine::Bool=true) where {D}
+    d1, d2 = plane
+    z = outofplane(D, plane)
+    roots = ntuple(d -> d == d2 || (full && d == d1) ? 4 : 2, D)
+    extents = ntuple(d -> d == d2 || (full && d == d1) ? (-2, 2) : (0, 2), D)
+    forest = Forest{T}(roots; N=N, periodic=ntuple(d -> d == z && other === :periodic, D),
+                       reflecting=ntuple(d -> (d == z && other === :reflect_lo, false), D),
+                       halfturn=full ? nothing : plane, extents=extents)
+    refine || return forest
+    return refine_where!(forest, halfturn_refinement(D, plane), 2)
+end

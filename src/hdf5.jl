@@ -61,13 +61,18 @@ const READ_VERSIONS = (1, 2)
 # listed only by a file holding a field set with `walls = :symmetric`
 # (TreeAMR's AMR-8): a reader without it would rebuild that set with
 # half-open walls, whose fill leaves the low wall planes as they are.
-const FEATURES = ("brick", "rotating", "outflow", "symmetric_walls")
+# `halfturn` (TreeAMR's M14) is listed only by a file whose forest has a
+# half-turn seam, for the same reason as `rotating`: a reader without it
+# would load the seam as an outer face, and the field sets without their
+# maps.
+const FEATURES = ("brick", "rotating", "outflow", "symmetric_walls", "halfturn")
 
 hasoutflow(forest::Forest) = any(f -> any(f), outflow_faces(forest))
 
 # The features a file over `forest` holding the field sets `sets` lists.
 features_of(forest::Forest, sets) =
-    ["brick"; hasrotating(forest) ? ["rotating"] : String[];
+    ["brick"; hasrotating(forest) ? [ishalfturn(forest) ? "halfturn" : "rotating"] :
+              String[];
      hasoutflow(forest) ? ["outflow"] : String[];
      any(((_, fs, _),) -> fs.walls === :symmetric, sets) ? ["symmetric_walls"] : String[]]
 
@@ -694,10 +699,13 @@ function write_forest(root, forest::Forest{D,R}) where {D,R}
             outflow = outflow_faces(forest)
             write_attribute(g, "outflow", UInt8[outflow[d][s] for s in 1:2, d in 1:D])
         end
-        # The rotating seam's pair `(d1, d2)` (M12), only where there is one:
-        # its absence is the only reading a file without it has.
+        # The rotating seam's pair `(d1, d2)` (M12), or the half turn's
+        # (TreeAMR's M14), only where there is one: its absence is the only
+        # reading a file without it has.
         hasrotating(forest) &&
-            write_attribute(g, "rotating", Int64[rotating_dims(forest)...])
+            (ishalfturn(forest) ?
+             write_attribute(g, "halfturn", Int64[halfturn_dims(forest)...]) :
+             write_attribute(g, "rotating", Int64[rotating_dims(forest)...]))
         write_typeattrs(g, R, GEOMETRY_ATTRS)
         F, limbs = storage_of(R, "the forest's geometry")
         extents = R[forest.extents[d][s] for s in 1:2, d in 1:D]
@@ -752,7 +760,8 @@ function read_forest(g, ::Val{D}, types, context, comm, version, features) where
         note))
     periodic = read_flags(g, "periodic", (D,), note)
     reflecting = read_flags(g, "reflecting", (2, D), note)
-    rotating = read_rotating(g, "rotating" in features, note)
+    rotating = read_rotating(g, "rotating", "rotating" in features, note)
+    halfturn = read_rotating(g, "halfturn", "halfturn" in features, note)
     outflow = read_outflow(g, "outflow" in features, D, note)
     R, F, limbs = read_typeattrs(g, GEOMETRY_ATTRS, types, "the forest's geometry",
                                  context)
@@ -790,31 +799,33 @@ function read_forest(g, ::Val{D}, types, context, comm, version, features) where
                      outflow=ntuple(D) do d
                          (outflow[1, d] == 1, outflow[2, d] == 1)
                      end,
-                     rotating=rotating,
+                     rotating=rotating, halfturn=halfturn,
                      extents=ntuple(d -> (extents[1, d], extents[2, d]), D),
                      leaves=leaves, comm=comm)
 end
 
-# The rotating seam's pair (M12), `nothing` for a forest without one. The
-# attribute and the feature go together: a file with one and not the
-# other was not written by any TreeAMR, and is refused rather than read
-# with or without a seam. The pair itself is checked by the forest, as a
-# caller's would be.
-function read_rotating(g, listed::Bool, note)
-    if !hasattr(g, "rotating")
+# The rotating seam's pair (M12), or the half turn's (TreeAMR's M14), as
+# `name` says, `nothing` for a forest without one. The attribute and the
+# feature of the same name go together: a file with one and not the other
+# was not written by any TreeAMR, and is refused rather than read with or
+# without a seam. The pair itself is checked by the forest, as a caller's
+# would be, and so is a file with both seams.
+function read_rotating(g, name, listed::Bool, note)
+    if !hasattr(g, name)
         listed && throw(ArgumentError(
-            "the file lists the feature \"rotating\", but its forest has no " *
-            "`rotating` attribute, the pair of dimensions of the seam, which every " *
+            "the file lists the feature \"$name\", but its forest has no " *
+            "`$name` attribute, the pair of dimensions of the seam, which every " *
             "file with the feature stores: the file is damaged. " * note))
         return nothing
     end
     listed || throw(ArgumentError(
-        "the forest has a rotating seam, but the file does not list the feature " *
-        "\"rotating\", which every file with a seam lists so that a reader that does " *
-        "not know it refuses the file: the file is damaged. " * note))
-    pair = read_attribute(g, "rotating")
+        "the forest has a $(name == "halfturn" ? "half-turn" : "rotating") seam, but " *
+        "the file does not list the feature \"$name\", which every file with such a " *
+        "seam lists so that a reader that does not know it refuses the file: the file " *
+        "is damaged. " * note))
+    pair = read_attribute(g, name)
     (pair isa AbstractVector{<:Integer} && length(pair) == 2) || throw(ArgumentError(
-        "the forest's rotating seam, $(repr(pair)), is not a pair of dimensions: the " *
+        "the forest's $name seam, $(repr(pair)), is not a pair of dimensions: the " *
         "file is damaged. " * note))
     return (Int(pair[1]), Int(pair[2]))
 end
@@ -868,6 +879,8 @@ function write_layout(parent, name, fs::FieldSet{T,D}) where {T,D}
             write_attribute(g, "parity", [parity_name(p[d]) for d in 1:D, p in fs.parity])
         # The signed variable map of a rotating seam (M12), where there is one.
         fs.rotation === nothing || write_attribute(g, "rotation", Int64[fs.rotation...])
+        # And of a half-turn seam (TreeAMR's M14).
+        fs.halfturn === nothing || write_attribute(g, "halfturn", Int64[fs.halfturn...])
         # Symmetric walls (AMR-8), where the set has them.
         fs.walls === :half_open || write_attribute(g, "walls", string(fs.walls))
         write_attribute(g, "range", "owned")
@@ -909,6 +922,15 @@ function read_layout(g, name, ::Val{D}, types, context, features) where {D}
                 "indices, one per variable: the file is damaged. " * note))
         rotation = Int.(rotation)
     end
+    halfturn = nothing
+    if hasattr(g, "halfturn")
+        halfturn = read_attribute(g, "halfturn")
+        (halfturn isa AbstractVector{<:Integer} && length(halfturn) == nvars) ||
+            throw(ArgumentError(
+                "$what has the half-turn map $(repr(halfturn)), not $nvars signed " *
+                "variable indices, one per variable: the file is damaged. " * note))
+        halfturn = Int.(halfturn)
+    end
     # Half-open walls unless the set says otherwise. As for the forest's
     # attributes, the attribute and the feature go together.
     walls = :half_open
@@ -922,7 +944,8 @@ function read_layout(g, name, ::Val{D}, types, context, features) where {D}
             "\"symmetric_walls\" that a file with them lists: the file is damaged. " *
             note))
     end
-    return (; name=String(name), T, F, limbs, nvars, G, centering, walls, parity, rotation)
+    return (; name=String(name), T, F, limbs, nvars, G, centering, walls, parity, rotation,
+            halfturn)
 end
 
 # How a field set's blocks are stored: the dimensions of one block in the
@@ -1307,7 +1330,8 @@ set_layout((name, fs, u)) =
     (name, typename(eltype(fs.work)), fs.nvars, fs.G, string.(fs.centering),
      string(fs.walls),
      fs.parity === nothing ? "" : string(map(p -> map(parity_name, p), fs.parity)),
-     fs.rotation === nothing ? "" : string(fs.rotation), u === nothing)
+     fs.rotation === nothing ? "" : string(fs.rotation),
+     fs.halfturn === nothing ? "" : string(fs.halfturn), u === nothing)
 
 # The steps of "Checkpoints without parallel I/O" in CODE.md: the parts,
 # the index, the commit, the cleanup. Every rank runs this; each step
@@ -1938,7 +1962,8 @@ function load_from(f, meta, real, r::Ranks, path, types, backend, fieldsets)
     # is what decides their NUMA domain; the reads below only fill them.
     sets = map(layouts) do l
         fs = FieldSet{l.T}(forest, l.nvars; G=l.G, centering=l.centering, walls=l.walls,
-                           parity=l.parity, rotation=l.rotation, backend=backend)
+                           parity=l.parity, rotation=l.rotation, halfturn=l.halfturn,
+                           backend=backend)
         return (; fieldset=fs, state=statevector(fs))
     end
     table = read_parttable(root, version, n, names, context)

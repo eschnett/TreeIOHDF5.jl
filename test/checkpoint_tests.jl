@@ -637,9 +637,9 @@ end
         load_checkpoint(seamless))
     unknown = edited_copy(path, "unknown.h5") do file
         replace_attribute!(file["TreeAMR.jl"], "features",
-                           ["brick", "rotating", "halfturn"])
+                           ["brick", "rotating", "spiral"])
     end
-    @test_throws "the feature \"halfturn\"" load_checkpoint(unknown)
+    @test_throws "the feature \"spiral\"" load_checkpoint(unknown)
     # The pair as stored is checked by the forest: a dimension out of
     # range, and the seam on a periodic dimension.
     outside = edited_copy(path, "outside.h5") do file
@@ -664,6 +664,162 @@ end
         delete_attribute(file["TreeAMR.jl/fieldsets/u"], "rotation")
     end
     @test_throws "so the field set needs `rotation`" load_checkpoint(mapless)
+end
+
+# --- half turns (TreeAMR's M14) -------------------------------------------------
+#
+# A half-turn seam is saved as its pair under its own feature, and every
+# field set's `halfturn` map with it; a reader that drops either loads the
+# seam as an outer face, which only the next fill would show.
+
+@testset "A half-turn checkpoint round-trips bit for bit: D=$D, $T" for
+        (D, T, other) in ((2, Float32x2, :outer), (3, Float64, :reflect_lo))
+    # The failure: the forest back without its seam, or a set without its
+    # map. So the forest's pair, every set's map and tables, the state and
+    # the working arrays after both sides fill the same way are compared as
+    # bytes, and the file lists the feature `halfturn`, which an earlier
+    # reader does not know and so refuses.
+    p = D == 3 ? 2 : 4
+    ops = Operators(prolongation=p, restriction=p)
+    plane = (1, 2)
+    forest = halfturn_forest(Val(D); plane=plane, other=other, N=D == 3 ? 4 : 8)
+    f = halfturn_data(D, plane, other; poly=T === Float64 ? 0 : p)
+    parity = vector_parity(D, plane, other)
+    sets = [FieldSet{T}(forest, D + 1; G=ghosts_for(C, p), centering=C, parity=parity,
+                        halfturn=vector_halfturn(D, plane))
+            for C in (vertexcentered(D), facecentered(D, 2))]
+    rng = MersenneTwister(13)
+    states = map(sets) do fs
+        fill_by_coordinates!(f, fs)
+        u = statevector(fs)
+        gather!(u, fs)
+        u .+= T.(rand(rng, length(u))) ./ 64
+        scatter!(fs, u)
+        u
+    end
+    names = ("v", "f")
+    path = joinpath(mktempdir(), "halfturn.h5")
+    save_checkpoint(path, forest; fieldsets=Tuple(n => (fs, u) for (n, fs, u) in
+                                                  zip(names, sets, states)),
+                    application="HalfTurn" => 1)
+    @test file_features(path) == ["brick", "halfturn"]
+    ck = load_checkpoint(path; types=(Float32x2,))
+    @test ck.forest.rotating == forest.rotating
+    @test TreeAMR.halfturn_dims(ck.forest) == plane
+    @test ck.forest.leaves == forest.leaves
+    loaded = map(n -> ck.fieldsets[n].fieldset, names)
+    hook = boundary_by_coordinates(f)
+    for (fs, back, n, u) in zip(sets, loaded, names, states)
+        @test back.halfturn == fs.halfturn
+        @test Array(back.rotvars) == Array(fs.rotvars)
+        @test bytes(back.factors) == bytes(fs.factors)
+        @test bytes(ck.fieldsets[n].state) == bytes(u)
+        fill_ghosts!(fs, GhostSchedule(fs, ops); boundary=hook)
+        fill_ghosts!(back, GhostSchedule(back, ops); boundary=hook)
+        @test bytes(back.work) == bytes(fs.work)
+    end
+end
+
+# The half-plane wave as a chunked driver: a ring about the axis, which
+# the half turn turns into itself, vertex-centered, so that the seam slab
+# is partitioned one plane up, with outer faces whose ghosts the hook
+# writes from the initial data.
+const HALFPLANE = (; D=2, N=8, G=2, L=1.0, σ=0.08, r0=0.45, chunk=0.04, cfl=0.25,
+                   maxlevel=2, threshold=0.1, buffer=3,
+                   ops=Operators(prolongation=4, restriction=4))
+
+function halfplane_run(forest, fs, t, chunk, P)
+    hook = formula_hook(fs => quadrant_ring(P))
+    return (; forest, fs, schedule=GhostSchedule(fs, P.ops), hook, t, chunk)
+end
+
+function halfplane_start(P)
+    forest = Forest((2, 4); N=P.N, halfturn=(1, 2), extents=((0.0, P.L), (-P.L, P.L)))
+    fs = FieldSet(forest, 2; G=P.G, centering=vertexcentered(2), halfturn=(1, 2))
+    ring = quadrant_ring(P)
+    adapt_to_initial_data!(fs, P.ops; initial=ring, boundary=boundary_by_coordinates(ring),
+                           flags=_ -> pulse_flags(fs, P), buffer=P.buffer, maxpasses=8)
+    return halfplane_run(forest, fs, 0.0, 0, P)
+end
+
+function halfplane_chunk(run, P)
+    (; forest, fs, schedule, hook, t, chunk) = run
+    stop = (chunk + 1) * P.chunk
+    u = statevector(fs)
+    gather!(u, fs)
+    dt = P.cfl * minimum_spacing(forest)
+    nsteps = max(1, ceil(Int, (stop - t) / dt))
+    problem = QuadrantWave(WaveProblem(fs, schedule), hook)
+    sol = solve(ODEProblem(quadrant_rhs!, u, (t, stop), problem), RK4();
+                dt=(stop - t) / nsteps, adaptive=false, save_everystep=false)
+    scatter!(fs, sol.u[end])
+    fill_ghosts!(fs, schedule; boundary=hook)
+    regrid!(forest, fs => schedule; flags=pulse_flags(fs, P), buffer=P.buffer,
+            boundary=hook)
+    return halfplane_run(forest, fs, stop, chunk + 1, P)
+end
+
+halfplane_save(path, run) =
+    save_checkpoint(path, run.forest; fieldsets=("wave" => run.fs,),
+                    application="HalfPlaneRestart" => 1, data=(; t=run.t, chunk=run.chunk))
+
+function halfplane_restore(path, P)
+    ck = load_checkpoint(path)
+    return halfplane_run(ck.forest, ck.fieldsets["wave"].fieldset, ck.data.t,
+                         ck.data.chunk, P)
+end
+
+@testset "A restart of a half plane continues bit-identically through regrids" begin
+    # The failure: a restarted half plane that drifts from the
+    # uninterrupted one, a seam or a map lost on the way through the file.
+    # The ring crosses the seam, so the regrids there are conforming ones.
+    P = HALFPLANE
+    n, k = 4, 2
+    run, resumed, history = interrupted(halfplane_start, halfplane_chunk, halfplane_save,
+                                        halfplane_restore, P, n, k)
+    @test any(c -> history[c + 1] != history[c], (k + 1):n)
+    @test resumed.chunk == run.chunk == n
+    @test resumed.t === run.t
+    @test resumed.forest.leaves == run.forest.leaves
+    u, u′ = statevector(run.fs), statevector(resumed.fs)
+    gather!(u, run.fs)
+    gather!(u′, resumed.fs)
+    @test bytes(u′) == bytes(u)
+end
+
+@testset "A half-turn file without its feature, its seam or its map is refused, saying why" begin
+    # The failure: a file whose seam and feature disagree, or whose map is
+    # damaged or missing, read anyway.
+    plane = (1, 2)
+    forest = halfturn_forest(Val(2); plane=plane, other=:outer)
+    f = halfturn_data(2, plane, :outer)
+    fs = FieldSet(forest, 3; G=2, halfturn=vector_halfturn(2, plane))
+    fill_by_coordinates!(f, fs)
+    dir = mktempdir()
+    path = joinpath(dir, "halfturn.h5")
+    save_checkpoint(path, forest; fieldsets=("u" => fs,), application="HalfTurn" => 1)
+    @test TreeAMR.halfturn_dims(load_checkpoint(path).forest) == plane
+    unlisted = edited_copy(path, "unlisted.h5") do file
+        replace_attribute!(file["TreeAMR.jl"], "features", ["brick"])
+    end
+    @test_throws "does not list the feature \"halfturn\"" load_checkpoint(unlisted)
+    seamless = edited_copy(path, "seamless.h5") do file
+        delete_attribute(file["TreeAMR.jl/forest"], "halfturn")
+    end
+    @test_throws "lists the feature \"halfturn\", but its forest has no" (
+        load_checkpoint(seamless))
+    twice = edited_copy(path, "twice.h5") do file
+        replace_attribute!(file["TreeAMR.jl/forest"], "halfturn", [1, 1])
+    end
+    @test_throws "names dimension 1 twice" load_checkpoint(twice)
+    short = edited_copy(path, "short.h5") do file
+        replace_attribute!(file["TreeAMR.jl/fieldsets/u"], "halfturn", [1, -2])
+    end
+    @test_throws "has the half-turn map [1, -2], not 3 signed" load_checkpoint(short)
+    mapless = edited_copy(path, "mapless.h5") do file
+        delete_attribute(file["TreeAMR.jl/fieldsets/u"], "halfturn")
+    end
+    @test_throws "so the field set needs `halfturn`" load_checkpoint(mapless)
 end
 
 # --- refusals ----------------------------------------------------------------
