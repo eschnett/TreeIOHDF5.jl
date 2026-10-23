@@ -38,7 +38,7 @@ this file), and update every reference to a heading you rename.
 
 ## Commands
 
-Full test suite, about 3 min (850 tests; the MPI test's two `mpiexec`
+Full test suite, about 3 min (889 tests; the MPI test's two `mpiexec`
 jobs run beside the suite where the machine has 8+ threads and 24+ GB,
 as in TreeAMR):
 
