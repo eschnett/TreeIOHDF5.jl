@@ -83,4 +83,14 @@ Element sets, for TreeAMR's M16 (`CODE.md`, "Element sets" under
 feature `elements`. 974 tests pass at one thread against the TreeAMR
 checkout of M16. *Done when* the TreeAMR release with M16 is
 registered, the suite passes against it, and 0.1.6 is tagged and
-registered with that version appended to its `[compat]`.
+registered.
+
+`[compat] TreeAMR = "=0.2.7"` alone, since the save reads `FieldSet`'s new
+field `P`. Until 0.2.7 is registered, `Project.toml`, `test/Project.toml`
+and `docs/Project.toml` take TreeAMR from the branch of its release PR,
+eschnett/TreeAMR.jl#32, through `[sources]`.
+
+1. Once TreeAMR 0.2.7 is registered, remove those `[sources]` entries,
+   run the suite against the registered release, then tag and register
+   0.1.6. *Done when* CI is green on GitHub against the registered
+   TreeAMR and the package resolves from General.
