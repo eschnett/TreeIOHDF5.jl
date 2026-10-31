@@ -45,7 +45,9 @@
 # shared-file writer's version, load at every rank count. From M12 on it
 # runs a rotating quadrant too: the wave, a set that turns into itself
 # and a `RotationPair` through a fill, a regrid, interpolation beyond the
-# seam and a checkpoint, loaded at the other rank counts as well.
+# seam and a checkpoint, loaded at the other rank counts as well. From
+# TreeAMR's M16 on it checkpoints an element set beside a cell set,
+# loaded at every rank count with its order.
 
 using TreeAMR
 using MPI: MPI
@@ -561,6 +563,83 @@ function rotating_empty_case(tag)
     return nothing
 end
 
+# --- element sets (TreeAMR's M16) -------------------------------------------
+
+const OPSE = Operators(family=ElementLocal)
+
+# Pseudorandom owned points and zero ghosts: an element set's fill writes
+# its face ghosts only, so the edge and corner ghosts keep what they
+# held, which for a loaded set is zero.
+function owned_pseudorandom!(fs)
+    pseudorandom!(fs)
+    u = statevector(fs)
+    gather!(u, fs)
+    fill!(fs.work, 0)
+    scatter!(fs, u)
+    return fs
+end
+
+function element_fill!(efs, cfs)
+    fill_ghosts!(efs, GhostSchedule(efs, OPSE))
+    fill_ghosts!(cfs, GhostSchedule(cfs, OPS4))
+    return nothing
+end
+
+# An element set of order 3 beside a cell set, over a periodic square on
+# three levels, filled and saved with one part a node; loaded at this
+# rank count, the element set must come back with its order, both states
+# as saved, and a fill must give the working arrays the first fill gave.
+# Then the files of the runs at other rank counts, loaded at this one.
+function element_case(tag)
+    forest = forest_of((3, 3), 8; periodic=(true, true), centre=(1.4, 1.5))
+    emit(tag, "leaves", nleaves(forest), maxlevel(forest), digest(string(forest.leaves)))
+    efs = owned_pseudorandom!(FieldSet(forest, 2; G=1, centering=elementcentered(2), P=3))
+    cfs = owned_pseudorandom!(FieldSet(forest, 1; G=2))
+    element_fill!(efs, cfs)
+    emit(tag, "filled", digest(gathered(forest, efs.work)),
+         digest(gathered(forest, cfs.work)))
+    dir = checkpoint_dir()
+    path = joinpath(dir, "$tag-n$NRANKS.h5")
+    emit(tag, "saved", quad_states(forest, efs, cfs)...)
+    save_checkpoint(path, forest; fieldsets=("e" => efs, "c" => cfs),
+                    application="Elements" => 1, io=:node)
+    lforest, le, lc = element_load(path, COMM)
+    emit(tag, "loaded", le.P, quad_states(lforest, le, lc)...)
+    element_fill!(le, lc)
+    emit(tag, "refilled", digest(gathered(lforest, le.work)),
+         digest(gathered(lforest, lc.work)))
+    RANK == 0 && touch(joinpath(dir, "$tag-n$NRANKS.done"))
+    element_cross(tag)
+    return nothing
+end
+
+function element_load(path, comm)
+    ck = load_checkpoint(path; comm=comm)
+    return (ck.forest, ck.fieldsets["e"].fieldset, ck.fieldsets["c"].fieldset)
+end
+
+# The element checkpoints of the runs at other rank counts, loaded at
+# this one and, under MPI, at one rank over `MPI.COMM_SELF`: the order
+# and the states must be the saved ones. `#` lines, as in
+# `checkpoint_cross`.
+function element_cross(tag)
+    dir = checkpoint_dir()
+    counts = checkpoint_sources(dir, tag)
+    names = filter(readdir(dir)) do name
+        m = match(r"^(.*)-n(\d+)\.h5$", name)
+        m === nothing && return false
+        n = parse(Int, m[2])
+        m[1] == tag && n != NRANKS && (counts === nothing || n in counts)
+    end
+    comms = USE_MPI ? ((NRANKS, COMM), (1, MPI.COMM_SELF)) : ((1, nothing),)
+    for name in sort(names), (n, comm) in comms
+        lforest, le, lc = element_load(joinpath(dir, name), comm)
+        emit("#", replace(name, ".h5" => ""), "at", n, "loaded", le.P,
+             quad_states(lforest, le, lc)...)
+    end
+    return nothing
+end
+
 # --- checkpoints (step 6 of M7) --------------------------------------------
 
 # Where the checkpoints go: `TREEAMR_CHECKPOINT_DIR`, which `mpi_tests.jl`
@@ -939,6 +1018,9 @@ function main()
     # leaves every rank but one without blocks.
     rotating_case("Q2")
     rotating_empty_case("QE2")
+    # An element set beside a cell set (TreeAMR's M16), saved after a
+    # fill and loaded at this rank count and the others.
+    element_case("EC")
     # Checkpoints: saved and loaded at this rank count, and the files of
     # the runs before this one loaded at it.
     checkpoint_case("C")

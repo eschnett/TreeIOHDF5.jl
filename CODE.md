@@ -123,7 +123,7 @@ what cannot be recomputed, and nothing else:
 | Forest: `D`, the geometry type, `roots`, `periodic`, `reflecting`, `outflow`, `rotating` or `halfturn`, `extents` (bitwise, in the geometry type), `N` | saved | the inputs the forest was built from |
 | Forest: the leaf list | saved | the only record of the mesh's history |
 | Forest: `generation` | not saved | a staleness counter, meaningless in another process |
-| Field set: element type, `nvars`, `G`, `centering`, `walls`, `parity`, `rotation` | saved | its layout |
+| Field set: element type, `nvars`, `G`, `centering`, `P`, `walls`, `parity`, `rotation` | saved | its layout |
 | Field set: the **owned** points, in state-vector layout `(N, …, N, nvars, nblocks)` | saved | the authoritative data |
 | Ghosts, shared vertex planes, the derived wall plane | rebuilt by `scatter!` and `fill_ghosts!` with the application's hook | derived from the owned points |
 | `GhostSchedule`, `InterfaceSchedule`, `Operators`, the parity factors, the rotation tables, a `RotationPair` | rebuilt | derived, or the application's inputs |
@@ -168,7 +168,8 @@ application gets a top-level group of its own, named after it:
         level            Int8[nleaves]
         coords           UInt32[D, nleaves]
       fieldsets/<name>/  attrs: eltype [, limbtype, nlimbs], nvars,
-                                G (D), centering (D: "cell" | "vertex"),
+                                G (D), centering (D: "cell" | "vertex" |
+                                "element"), P (element sets only),
                                 parity ((D, nvars): "even" | "odd" |
                                 "none"; absent when the set has none),
                                 range = "owned"
@@ -372,6 +373,26 @@ with half-open walls. A set with the attribute in a file without the
 feature is refused as damaged, as is any value but `"symmetric"`. The
 walls join what the ranks agree on about a field set before a save.
 
+**Element sets** (no format bump). An element-centered field set
+(TreeAMR's M16, `centering = elementcentered(D)`, whose points are the
+Gauss–Lobatto nodes of elements of order `P`) stores its centering as
+`"element"` in every dimension and its order as a `P` attribute in
+`fieldsets/<name>/`, an `Int64`, and the file lists `elements` in
+`features`. Every position, quadrature weight and inter-level operator
+of the set follows from `P`, and a set of another order builds without
+complaint wherever `N` allows it, so `P` is saved rather than left to
+the caller, and a reader from before M16 refuses the file by the
+feature, saying why, rather than by the centering. A set without
+elements, `P = 0`, writes no attribute, so a file without element sets
+lists nothing new and is readable by every earlier reader of its
+version. A set with the attribute in a file without the feature is
+refused as damaged, as is an element centering without the attribute;
+the value is checked by the field set's constructor, as a caller's is
+(`P ≥ 1`, `N` a multiple of `2(P+1)`, `G ≤ 1`). The operators are not
+saved, the element family `ElementLocal` included: like every family,
+it is the application's input, and it has no orders to record. `P`
+joins what the ranks agree on about a field set before a save.
+
 **Element types**.
 
 - **Native types** — `Float16`, `Float32`, `Float64`, the signed and
@@ -421,9 +442,10 @@ with the reason, and defaults are supplied where they are obvious.
   `halfturn`, listed only by a file whose forest has a half-turn seam
   (the same section), and outflow faces
   add `outflow`, listed only by a file whose forest has one (see
-  "Outflow faces" above), and symmetric walls `symmetric_walls`, listed
+  "Outflow faces" above), symmetric walls `symmetric_walls`, listed
   only by a file holding a set that has them (see "Symmetric walls"
-  above).
+  above), and TreeAMR's M16 `elements`, listed only by a file holding
+  an element-centered set (see "Element sets" above).
 - **Refusals are `ArgumentError`s that say why.** They name the TreeAMR
   version that wrote the file, from `provenance`, and point to
   `checkpoint_environment(path, dir)`. That writes the stored
@@ -1012,7 +1034,8 @@ always, and CUDA or Metal with `TREEAMR_TEST_BACKEND`), `partition_tests.jl`
 `mpi_tests.jl`.
 
 `checkpoint_tests.jl` checks a bitwise round trip over every centering,
-`Float64`/`Float32`/`Float32x2` and every face kind, restarts of the
+`Float64`/`Float32`/`Float32x2` and every face kind, an element set
+beside a cell set in each dimension, through a fill and a regrid, restarts of the
 wave and Burgers studies that continue byte for byte through regrids,
 the refusals with their reasons, the checksums (a damaged block, a
 recomputed one, missing ones), the atomic write and a failing I/O
@@ -1031,8 +1054,8 @@ except the `sum` lines, as TreeAMR's MPI test does; `test/mpi_jobs.jl`
 starts both jobs at the start of the suite where the machine has room.
 The workload is TreeAMR's, reduced to the cases that end in a checkpoint
 — a rank without blocks (E2), a rotating quadrant and its pair (Q2), a
-single leaf at the axis (QE2) — and the chunked restarts (C, C1) and the
-refusals. Each run writes its files to one directory
+single leaf at the axis (QE2) — an element set beside a cell set (EC),
+and the chunked restarts (C, C1) and the refusals. Each run writes its files to one directory
 (`TREEAMR_CHECKPOINT_DIR`), and a run that loads another rank count's
 files waits for that run's marker (`TREEAMR_CHECKPOINT_FROM`), so the
 serial reference, three ranks and two ranks may run at once.
