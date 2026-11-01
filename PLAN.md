@@ -78,19 +78,11 @@ unchanged; 889 tests pass against the registered TreeAMR 0.2.6.
 
 ## Release 0.1.6
 
-Element sets, for TreeAMR's M16 (`CODE.md`, "Element sets" under
-"Checkpoint and restart"): a set's order `P` as an attribute, under the
-feature `elements`. 974 tests pass at one thread against the TreeAMR
-checkout of M16. *Done when* the TreeAMR release with M16 is
-registered, the suite passes against it, and 0.1.6 is tagged and
-registered.
+Element sets, for TreeAMR 0.2.7 (TreeAMR's M16; `CODE.md`, "Element
+sets" under "Checkpoint and restart"): a set's order `P` as an attribute,
+under the feature `elements`. `[compat] TreeAMR = "=0.2.7"` alone, since
+the save reads `FieldSet`'s new field `P`. 974 tests pass against the
+registered TreeAMR 0.2.7, and the docs build with their doctest.
 
-`[compat] TreeAMR = "=0.2.7"` alone, since the save reads `FieldSet`'s new
-field `P`. Until 0.2.7 is registered, `Project.toml`, `test/Project.toml`
-and `docs/Project.toml` take TreeAMR from the branch of its release PR,
-eschnett/TreeAMR.jl#32, through `[sources]`.
-
-1. Once TreeAMR 0.2.7 is registered, remove those `[sources]` entries,
-   run the suite against the registered release, then tag and register
-   0.1.6. *Done when* CI is green on GitHub against the registered
-   TreeAMR and the package resolves from General.
+1. Tag and register 0.1.6. *Done when* CI is green on GitHub and the
+   package resolves from General.
