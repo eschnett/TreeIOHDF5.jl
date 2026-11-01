@@ -2,9 +2,10 @@
 #
 # `test/mpi_workload.jl` runs the cases of TreeAMR's MPI workload that
 # end in a checkpoint — a rank with no blocks, a rotating quadrant with a
-# set that turns into itself and a `RotationPair`, and a single leaf at
-# the axis — and then a run checkpointed after a regrid, with a part file
-# per rank, per I/O group and per node, continued from each, the files of
+# set that turns into itself and a `RotationPair`, a single leaf at the
+# axis, and an element set beside a cell set — and then a run
+# checkpointed after a regrid, with a part file per rank, per I/O group
+# and per node, continued from each, the files of
 # the earlier runs, written at other rank counts, loaded and continued,
 # and every refusal a distributed checkpoint makes. It prints digests of
 # what it saved and loaded. Run serially in this process it is the
@@ -129,6 +130,11 @@ end
     @test words("QC loaded")[3:5] == qsaved
     @test words("QC refilled")[3:5] == words("Q2 refilled")[3:5]
     @test words("QE2 checkpoint")[3:4] == ["1", "true"]
+    # The element set beside a cell set (M16): the checkpoint loads the
+    # order and the states that were saved, and fills to what was filled.
+    esaved = words("EC saved")[3:4]
+    @test words("EC loaded")[3:5] == ["3"; esaved]
+    @test words("EC refilled")[3:4] == words("EC filled")[3:4]
     # The comparison itself: a changed digest is caught, and so is a sum
     # that moved by more than roundoff — while the same sum to roundoff
     # is not.
@@ -155,6 +161,8 @@ end
         @test length(c1) == 1 && split(only(c1))[end] == words("C1 saved")[3]
         qc = filter(startswith("# QC-n$from at $at loaded "), hashes)
         @test length(qc) == 1 && split(only(qc))[(end - 2):end] == qsaved
+        ec = filter(startswith("# EC-n$from at $at loaded "), hashes)
+        @test length(ec) == 1 && split(only(ec))[(end - 2):end] == ["3"; esaved]
     end
 
     outs = Dict{Int,String}()
@@ -246,6 +254,7 @@ end
     withenv("TREEAMR_CHECKPOINT_DIR" => dir, "TREEAMR_CHECKPOINT_FROM" => "2 3") do
         Base.invokelatest(workload.checkpoint_cross, "C")
         Base.invokelatest(workload.rotating_cross, "QC")
+        Base.invokelatest(workload.element_cross, "EC")
     end
     hashes = workload_lines(String(take!(io)))
     for from in (2, 3)

@@ -8,6 +8,7 @@
 - [Release 0.1.3](#release-013)
 - [Release 0.1.4](#release-014)
 - [Release 0.1.5](#release-015)
+- [Release 0.1.6](#release-016)
 
 ## Release 0.1.0
 
@@ -74,3 +75,14 @@ own and each field set's `halfturn` map; tagged and registered with
 Done: compat only, for TreeAMR 0.2.6, the folds over points
 (`mesh_fold`, `block_fold`), which leave the companion interface
 unchanged; 889 tests pass against the registered TreeAMR 0.2.6.
+
+## Release 0.1.6
+
+Element sets, for TreeAMR 0.2.7 (TreeAMR's M16; `CODE.md`, "Element
+sets" under "Checkpoint and restart"): a set's order `P` as an attribute,
+under the feature `elements`. `[compat] TreeAMR = "=0.2.7"` alone, since
+the save reads `FieldSet`'s new field `P`. 974 tests pass against the
+registered TreeAMR 0.2.7, and the docs build with their doctest.
+
+1. Tag and register 0.1.6. *Done when* CI is green on GitHub and the
+   package resolves from General.

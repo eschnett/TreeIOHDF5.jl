@@ -607,6 +607,146 @@ end
     @test_throws "has the walls \"closed\"" load_checkpoint(odd)
 end
 
+# Element sets (TreeAMR's M16): an element-centered set beside a cell set
+# in one file, over a forest refined once at a corner, so that every set
+# has coarse-fine faces. One case a dimension, the element type and the
+# face kinds rotating: periodic in `Float64`, a reflecting wall with
+# outer faces and the hook in `Float32x2`, and order 1 over a periodic
+# cube in `Float32`.
+function element_checkpoint_sets(D, T)
+    P = D == 3 ? 1 : 3
+    N = 2(P + 1)
+    reflects = D == 2
+    forest = Forest{T === Float32x2 ? Float64 : T}(
+        ntuple(_ -> 2, D); N=N, periodic=ntuple(_ -> !reflects, D),
+        reflecting=ntuple(d -> reflects && d == 1 ? (true, false) : (false, false), D))
+    refine!(forest, [forest.leaves[1]])
+    parity = reflects ? [(OddParity, EvenParity), (EvenParity, EvenParity)] : nothing
+    p = D == 3 ? 2 : 4
+    efs = FieldSet{T}(forest, 2; G=1, centering=elementcentered(D), P=P, parity=parity)
+    cfs = FieldSet{T}(forest, 2; G=ghosts_for(cellcentered(D), p), parity=parity)
+    eops = Operators(family=ElementLocal)
+    cops = Operators(prolongation=p, restriction=p)
+    return forest, (efs, cfs), (eops, cops)
+end
+
+@testset "An element set round-trips bit for bit beside a cell set: D=$D, $T" for
+        (D, T) in ((1, Float64), (2, Float32x2), (3, Float32))
+    # The failure: an element set restored without its order `P`, or with
+    # another one, which builds without complaint where `N` allows it and
+    # then puts every node, weight and stencil in the wrong place; or a
+    # load that confuses the element set with the cell set beside it,
+    # which has the same storage and owned ranges. So both sets, their
+    # states and their working arrays after the same fill are compared as
+    # bytes, and so is what a regrid of each then makes, which for the
+    # element set is built from `P` alone; and the file lists the feature
+    # `elements` and stores `P` for the element set only.
+    forest, sets, ops = element_checkpoint_sets(D, T)
+    f = (x, v) -> v + x[1] / 3 - x[D]^2 / 5 + x[1] * x[D] / 7
+    hook = boundary_by_coordinates(f)
+    rng = MersenneTwister(16)
+    states = map(sets) do fs
+        fill_by_coordinates!(f, fs)
+        u = statevector(fs)
+        gather!(u, fs)
+        u .+= T.(rand(rng, length(u))) ./ 64
+        scatter!(fs, u)
+        u
+    end
+    path = joinpath(mktempdir(), "elements.h5")
+    save_checkpoint(path, forest;
+                    fieldsets=("elements" => (sets[1], states[1]),
+                               "cells" => (sets[2], states[2])),
+                    application="Elements" => 1)
+    @test file_features(path) == ["brick", "elements"]
+    h5open(path) do file
+        e, c = file["TreeAMR.jl/fieldsets/elements"], file["TreeAMR.jl/fieldsets/cells"]
+        @test read_attribute(e, "P") == sets[1].P
+        @test read_attribute(e, "centering") == fill("element", D)
+        @test !haskey(attributes(c), "P")
+    end
+    ck = load_checkpoint(path; types=(Float32x2,))
+    loaded = (ck.fieldsets["elements"].fieldset, ck.fieldsets["cells"].fieldset)
+    @test loaded[1].P == sets[1].P
+    @test loaded[1].centering == elementcentered(D)
+    @test loaded[2].P == 0
+    @test loaded[2].centering == cellcentered(D)
+    for (fs, back, u, name) in zip(sets, loaded, states, ("elements", "cells"))
+        @test (back.nvars, back.G, back.parity) == (fs.nvars, fs.G, fs.parity)
+        @test eltype(back.work) === T
+        @test bytes(ck.fieldsets[name].state) == bytes(u)
+    end
+
+    scheds = map((fs, o) -> GhostSchedule(fs, o), sets, ops)
+    lscheds = map((fs, o) -> GhostSchedule(fs, o), loaded, ops)
+    @test lscheds[1].P == scheds[1].P
+    for (fs, back, s, ls) in zip(sets, loaded, scheds, lscheds)
+        fill_ghosts!(fs, s; boundary=hook)
+        fill_ghosts!(back, ls; boundary=hook)
+        @test bytes(back.work) == bytes(fs.work)
+    end
+    # The refined corner coarsened and the last block refined, in both runs.
+    flags(fs) = [level(blockkey(fs, b)) == 1 ? Coarsen : b == nblocks(fs) ? Refine : Keep
+                 for b in 1:nblocks(fs)]
+    @test regrid!(forest, Tuple(fs => s for (fs, s) in zip(sets, scheds));
+                  flags=flags(sets[1]), boundary=hook)
+    @test regrid!(ck.forest, Tuple(fs => s for (fs, s) in zip(loaded, lscheds));
+                  flags=flags(loaded[1]), boundary=hook)
+    @test ck.forest.leaves == forest.leaves
+    for (fs, back) in zip(sets, loaded)
+        @test bytes(back.work) == bytes(fs.work)
+    end
+end
+
+@testset "An element file lists its feature, and one that hides it or its order is refused" begin
+    # The failure: a file with an element set read by a reader that does
+    # not know elements, which would refuse the centering without saying
+    # why, or build the set without its order; or a file whose sets,
+    # orders and feature disagree, read anyway. A file without element
+    # sets lists nothing new and stores nothing new.
+    forest = Forest((2, 2); N=8, periodic=(true, true))
+    efs = FieldSet(forest, 1; G=1, centering=elementcentered(2), P=3)
+    cfs = FieldSet(forest, 1; G=1)
+    dir = mktempdir()
+    path = joinpath(dir, "elements.h5")
+    save_checkpoint(path, forest; fieldsets=("e" => efs, "c" => cfs),
+                    application="Elements" => 1)
+    @test file_features(path) == ["brick", "elements"]
+    plain = joinpath(dir, "plain.h5")
+    save_checkpoint(plain, forest; fieldsets=("c" => cfs,), application="Elements" => 1)
+    @test file_features(plain) == ["brick"]
+
+    # A reader that does not know the feature refuses the file by it.
+    unknown = edited_copy(path, "unknown.h5") do file
+        replace_attribute!(file["TreeAMR.jl"], "features", ["brick", "elements2"])
+    end
+    @test_throws "the feature \"elements2\"" load_checkpoint(unknown)
+    unlisted = edited_copy(path, "unlisted.h5") do file
+        replace_attribute!(file["TreeAMR.jl"], "features", ["brick"])
+    end
+    @test_throws "does not list the feature \"elements\"" load_checkpoint(unlisted)
+    orderless = edited_copy(path, "orderless.h5") do file
+        delete_attribute(file["TreeAMR.jl/fieldsets/e"], "P")
+    end
+    @test_throws "but no element order P" load_checkpoint(orderless)
+    # The order as stored is checked by the field set, as a caller's is:
+    # one the layout does not allow, one on a set without elements, and
+    # one that is not a number.
+    wrong = edited_copy(path, "wrong.h5") do file
+        replace_attribute!(file["TreeAMR.jl/fieldsets/e"], "P", 2)
+    end
+    @test_throws "whole parent elements" load_checkpoint(wrong)
+    misplaced = edited_copy(path, "misplaced.h5") do file
+        write_attribute(file["TreeAMR.jl/fieldsets/c"], "P", 3)
+    end
+    @test_throws "has no elements" load_checkpoint(misplaced)
+    @test load_checkpoint(misplaced; fieldsets="e").fieldsets["e"].fieldset.P == 3
+    named = edited_copy(path, "named.h5") do file
+        replace_attribute!(file["TreeAMR.jl/fieldsets/e"], "P", "three")
+    end
+    @test_throws "has the element order \"three\", not an integer" load_checkpoint(named)
+end
+
 @testset "A rotating file without its feature or its seam is refused, saying why" begin
     # The failure: a file whose seam and feature disagree, or whose maps
     # are damaged, read anyway — with the seam as two outer faces, or a

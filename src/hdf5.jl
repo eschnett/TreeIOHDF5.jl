@@ -64,8 +64,13 @@ const READ_VERSIONS = (1, 2)
 # `halfturn` (TreeAMR's M14) is listed only by a file whose forest has a
 # half-turn seam, for the same reason as `rotating`: a reader without it
 # would load the seam as an outer face, and the field sets without their
-# maps.
-const FEATURES = ("brick", "rotating", "outflow", "symmetric_walls", "halfturn")
+# maps. `elements` (TreeAMR's M16) is listed only by a file holding an
+# element-centered field set: a reader without it would refuse the
+# centering `"element"` with a message that does not say why, or, given
+# a TreeAMR that knows the centering, build the set without its order
+# `P`, from which every position, weight and operator of the set follows.
+const FEATURES = ("brick", "rotating", "outflow", "symmetric_walls", "halfturn",
+                  "elements")
 
 hasoutflow(forest::Forest) = any(f -> any(f), outflow_faces(forest))
 
@@ -74,7 +79,8 @@ features_of(forest::Forest, sets) =
     ["brick"; hasrotating(forest) ? [ishalfturn(forest) ? "halfturn" : "rotating"] :
               String[];
      hasoutflow(forest) ? ["outflow"] : String[];
-     any(((_, fs, _),) -> fs.walls === :symmetric, sets) ? ["symmetric_walls"] : String[]]
+     any(((_, fs, _),) -> fs.walls === :symmetric, sets) ? ["symmetric_walls"] : String[];
+     any(((_, fs, _),) -> fs.P > 0, sets) ? ["elements"] : String[]]
 
 # --- element types -------------------------------------------------------
 
@@ -874,6 +880,9 @@ function write_layout(parent, name, fs::FieldSet{T,D}) where {T,D}
         write_attribute(g, "nvars", Int64(fs.nvars))
         write_attribute(g, "G", Int64[fs.G...])
         write_attribute(g, "centering", [string(c) for c in fs.centering])
+        # The polynomial order of an element-centered set (TreeAMR's M16),
+        # which sets without elements, `P = 0`, do not have.
+        fs.P > 0 && write_attribute(g, "P", Int64(fs.P))
         # (D, nvars), which C sees as (nvars, D).
         fs.parity === nothing ||
             write_attribute(g, "parity", [parity_name(p[d]) for d in 1:D, p in fs.parity])
@@ -944,8 +953,28 @@ function read_layout(g, name, ::Val{D}, types, context, features) where {D}
             "\"symmetric_walls\" that a file with them lists: the file is damaged. " *
             note))
     end
-    return (; name=String(name), T, F, limbs, nvars, G, centering, walls, parity, rotation,
-            halfturn)
+    # The order of an element set (M16), `nothing` for any other, which is
+    # what the constructor takes for "none". The attribute, the centering
+    # and the feature go together; the order itself, and whether `N` and
+    # `G` allow it, are checked by the constructor, as a caller's are.
+    P = nothing
+    if hasattr(g, "P")
+        P = read_attribute(g, "P")
+        P isa Integer || throw(ArgumentError(
+            "$what has the element order $(repr(P)), not an integer: the file is " *
+            "damaged. " * note))
+        "elements" in features || throw(ArgumentError(
+            "$what has an element order P, but the file does not list the feature " *
+            "\"elements\" that a file with an element set lists: the file is damaged. " *
+            note))
+        P = Int(P)
+    elseif any(==(:element), centering)
+        throw(ArgumentError(
+            "$what has the centering $centering but no element order P, which every " *
+            "element-centered set stores: the file is damaged. " * note))
+    end
+    return (; name=String(name), T, F, limbs, nvars, G, centering, P, walls, parity,
+            rotation, halfturn)
 end
 
 # How a field set's blocks are stored: the dimensions of one block in the
@@ -1327,7 +1356,7 @@ end
 # What the ranks must agree on about one field set: everything that
 # shapes the objects created for it.
 set_layout((name, fs, u)) =
-    (name, typename(eltype(fs.work)), fs.nvars, fs.G, string.(fs.centering),
+    (name, typename(eltype(fs.work)), fs.nvars, fs.G, string.(fs.centering), fs.P,
      string(fs.walls),
      fs.parity === nothing ? "" : string(map(p -> map(parity_name, p), fs.parity)),
      fs.rotation === nothing ? "" : string(fs.rotation),
@@ -1961,9 +1990,9 @@ function load_from(f, meta, real, r::Ranks, path, types, backend, fieldsets)
     # would a caller's, and `statevector` places the pages by owner, which
     # is what decides their NUMA domain; the reads below only fill them.
     sets = map(layouts) do l
-        fs = FieldSet{l.T}(forest, l.nvars; G=l.G, centering=l.centering, walls=l.walls,
-                           parity=l.parity, rotation=l.rotation, halfturn=l.halfturn,
-                           backend=backend)
+        fs = FieldSet{l.T}(forest, l.nvars; G=l.G, centering=l.centering, P=l.P,
+                           walls=l.walls, parity=l.parity, rotation=l.rotation,
+                           halfturn=l.halfturn, backend=backend)
         return (; fieldset=fs, state=statevector(fs))
     end
     table = read_parttable(root, version, n, names, context)
