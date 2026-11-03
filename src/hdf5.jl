@@ -10,7 +10,8 @@
 #       /TreeAMR.jl/               format, format_version, features,
 #                                  application, save_id
 #         provenance/              who wrote the file, and in which environment
-#         forest/                  the brick, the extents, the leaves as columns
+#         forest/                  the brick and its extents, or the patches
+#                                  and their glue; the leaves as columns
 #         fieldsets/<name>/        the layout of each field set
 #         parttable/               every part's file, block range, size, checksums
 #         parts/<jjjj>             an external link to each part file, for tools;
@@ -69,15 +70,26 @@ const READ_VERSIONS = (1, 2)
 # centering `"element"` with a message that does not say why, or, given
 # a TreeAMR that knows the centering, build the set without its order
 # `P`, from which every position, weight and operator of the set follows.
+# `patches` (TreeAMR's M17) takes the place of `brick` in a file whose
+# forest is several bricks of roots glued at their faces: a reader without
+# it would find no `roots` to build a brick from, or, were it to guess one,
+# lose the glue and load every glued face as an outer one. A connectivity
+# is the first thing a reader must understand, so it is a feature, as
+# `brick` always was; the format version stays, since a brick's file is
+# what it was (CODE.md, "Forests of patches").
 const FEATURES = ("brick", "rotating", "outflow", "symmetric_walls", "halfturn",
-                  "elements")
+                  "elements", "patches")
 
 hasoutflow(forest::Forest) = any(f -> any(f), outflow_faces(forest))
 
+# Whether the forest is made of patches (TreeAMR's M17): TreeAMR gives the
+# patches form's arguments back for such a forest only.
+haspatches(forest::Forest) = patch_keywords(forest) !== nothing
+
 # The features a file over `forest` holding the field sets `sets` lists.
 features_of(forest::Forest, sets) =
-    ["brick"; hasrotating(forest) ? [ishalfturn(forest) ? "halfturn" : "rotating"] :
-              String[];
+    [haspatches(forest) ? "patches" : "brick";
+     hasrotating(forest) ? [ishalfturn(forest) ? "halfturn" : "rotating"] : String[];
      hasoutflow(forest) ? ["outflow"] : String[];
      any(((_, fs, _),) -> fs.walls === :symmetric, sets) ? ["symmetric_walls"] : String[];
      any(((_, fs, _),) -> fs.P > 0, sets) ? ["elements"] : String[]]
@@ -689,13 +701,19 @@ end
 # --- the forest ------------------------------------------------------------
 
 function write_forest(root, forest::Forest{D,R}) where {D,R}
+    # The patches form's arguments (TreeAMR's M17), `nothing` for a brick.
+    kw = patch_keywords(forest)
     g = create_group(root, "forest")
     try
         write_attribute(g, "D", Int64(D))
         write_attribute(g, "N", Int64(forest.N))
-        write_attribute(g, "connectivity", "brick")
-        write_attribute(g, "roots", Int64[forest.roots...])
-        write_attribute(g, "periodic", UInt8[forest.periodic...])
+        write_attribute(g, "connectivity", kw === nothing ? "brick" : "patches")
+        # A forest of patches has no roots and no extents of its own, only
+        # its patches', and is never periodic: a wrap is a glue.
+        if kw === nothing
+            write_attribute(g, "roots", Int64[forest.roots...])
+            write_attribute(g, "periodic", UInt8[forest.periodic...])
+        end
         # (lo, hi) per dimension: a (2, D) array, which C sees as (D, 2).
         reflecting = reflecting_faces(forest)
         write_attribute(g, "reflecting", UInt8[reflecting[d][s] for s in 1:2, d in 1:D])
@@ -714,8 +732,12 @@ function write_forest(root, forest::Forest{D,R}) where {D,R}
              write_attribute(g, "rotating", Int64[rotating_dims(forest)...]))
         write_typeattrs(g, R, GEOMETRY_ATTRS)
         F, limbs = storage_of(R, "the forest's geometry")
-        extents = R[forest.extents[d][s] for s in 1:2, d in 1:D]
-        write_array(g, "extents", F, (limbs..., 2, D), extents)
+        if kw === nothing
+            extents = R[forest.extents[d][s] for s in 1:2, d in 1:D]
+            write_array(g, "extents", F, (limbs..., 2, D), extents)
+        else
+            write_patches(g, kw, Val(D), R, F, limbs)
+        end
         # The leaves as columns, in curve order: block `b` of the forest is
         # row `b`, and the blocks of a part are one run of rows.
         n = nleaves(forest)
@@ -740,39 +762,67 @@ function write_forest(root, forest::Forest{D,R}) where {D,R}
     return nothing
 end
 
+# The patches (TreeAMR's M17), in place of the brick's `roots` and
+# `extents`: each patch's roots, `Int64` of shape `(D, npatches)`, and its
+# extents, `(limbs?, 2, D, npatches)` in the geometry type, bit for bit;
+# and the glue table as TreeAMR gives it back, one column per glued face
+# in its canonical order (patch, then dimension, then side), both
+# directions of every gluing listed: `glue_from` and `glue_to`, `Int64`
+# of shape `(3, nglue)`, the faces `(patch, dim, side)` with side 1 low
+# and 2 high, and `glue_map`, `Int64` of shape `(D, nglue)`, the signed
+# axis map, entry `e` being `±a` where axis `e` of the one patch runs
+# along axis `a` of the other, reversed where negative. Nothing derived
+# from them — offsets, the dense table, patch corners — is stored: the
+# forest's constructor derives it again, and checks the rest.
+function write_patches(g, kw, ::Val{D}, ::Type{R}, F, limbs) where {D,R}
+    np, ng = length(kw.patches), length(kw.glue)
+    write_array(g, "patch_roots", Int64, (D, np),
+                Int64[p.roots[d] for d in 1:D, p in kw.patches])
+    extents = R[p.extents[d][s] for s in 1:2, d in 1:D, p in kw.patches]
+    write_array(g, "patch_extents", F, (limbs..., 2, D, np), extents)
+    write_array(g, "glue_from", Int64, (3, ng), Int64[e.from[i] for i in 1:3, e in kw.glue])
+    write_array(g, "glue_to", Int64, (3, ng), Int64[e.to[i] for i in 1:3, e in kw.glue])
+    write_array(g, "glue_map", Int64, (D, ng), Int64[e.map[a] for a in 1:D, e in kw.glue])
+    return nothing
+end
+
 function read_forest(g, types, context, comm, version, features)
     note = writer_note(context)
     connectivity = read_attribute(g, "connectivity")
-    connectivity == "brick" || throw(ArgumentError(
+    connectivity in ("brick", "patches") || throw(ArgumentError(
         "the forest's connectivity is $(repr(connectivity)), and this version reads only " *
-        "\"brick\". " * note))
+        "\"brick\" and \"patches\". " * note))
+    # As for a seam, the connectivity and its feature go together: a file
+    # with one and not the other was not written by any TreeAMR.
+    patched = connectivity == "patches"
+    patched == ("patches" in features) || throw(ArgumentError(
+        (patched ?
+         "the forest is made of patches, but the file does not list the feature " *
+         "\"patches\", which every file over patches lists so that a reader that does " *
+         "not know them refuses the file" :
+         "the file lists the feature \"patches\", but its forest's connectivity is " *
+         "\"brick\"") * ": the file is damaged. " * note))
     D = read_attribute(g, "D")
     (D isa Integer && D >= 1) || throw(ArgumentError(
         "the forest's dimension, D = $(repr(D)), is not a positive integer: the file is " *
         "damaged. " * note))
-    return read_forest(g, Val(Int(D)), types, context, comm, version, features)
+    return read_forest(g, Val(Int(D)), types, context, comm, version, features, patched)
 end
 
 # Every rank reads every leaf, since the forest is replicated — over
 # several ranks from its own copy of the index's image, so every rank
 # reaches the same verdict on it without a message — and builds it over
 # `comm`.
-function read_forest(g, ::Val{D}, types, context, comm, version, features) where {D}
+function read_forest(g, ::Val{D}, types, context, comm, version, features,
+                     patched::Bool) where {D}
     note = writer_note(context)
     N = read_attribute(g, "N")
-    roots = read_attribute(g, "roots")
-    (roots isa AbstractVector{<:Integer} && length(roots) == D) || throw(ArgumentError(
-        "the forest's roots, $(repr(roots)), are not $D integers: the file is damaged. " *
-        note))
-    periodic = read_flags(g, "periodic", (D,), note)
     reflecting = read_flags(g, "reflecting", (2, D), note)
     rotating = read_rotating(g, "rotating", "rotating" in features, note)
     halfturn = read_rotating(g, "halfturn", "halfturn" in features, note)
     outflow = read_outflow(g, "outflow" in features, D, note)
     R, F, limbs = read_typeattrs(g, GEOMETRY_ATTRS, types, "the forest's geometry",
                                  context)
-    extents = read_array!(Matrix{R}(undef, 2, D), g["extents"], F, (limbs..., 2, D),
-                          "the forest's extents", note)
     rootset = g["root"]
     n = length(rootset)
     rootcol = read_array(rootset, Int32, (n,), "the leaves' roots", note)
@@ -797,17 +847,54 @@ function read_forest(g, ::Val{D}, types, context, comm, version, features) where
     threaded_foreach(n) do i
         leaves[i] = MortonKey{D}(rootcol[i], levels[i], ntuple(d -> coords[d, i], D))
     end
+    faces = (reflecting=ntuple(d -> (reflecting[1, d] == 1, reflecting[2, d] == 1), D),
+             outflow=ntuple(d -> (outflow[1, d] == 1, outflow[2, d] == 1), D))
+    # The patches form refuses a seam with its reason, as it would a
+    # caller's, so a damaged file with both is refused by the forest.
+    if patched
+        patches, glue = read_patches(g, Val(D), R, F, limbs, note)
+        return Forest{R}(patches; N=N, glue=glue, faces..., rotating=rotating,
+                         halfturn=halfturn, leaves=leaves, comm=comm)
+    end
+    roots = read_attribute(g, "roots")
+    (roots isa AbstractVector{<:Integer} && length(roots) == D) || throw(ArgumentError(
+        "the forest's roots, $(repr(roots)), are not $D integers: the file is damaged. " *
+        note))
+    periodic = read_flags(g, "periodic", (D,), note)
+    extents = read_array!(Matrix{R}(undef, 2, D), g["extents"], F, (limbs..., 2, D),
+                          "the forest's extents", note)
     return Forest{R}(ntuple(d -> Int(roots[d]), D); N=N,
-                     periodic=ntuple(d -> periodic[d] == 1, D),
-                     reflecting=ntuple(D) do d
-                         (reflecting[1, d] == 1, reflecting[2, d] == 1)
-                     end,
-                     outflow=ntuple(D) do d
-                         (outflow[1, d] == 1, outflow[2, d] == 1)
-                     end,
+                     periodic=ntuple(d -> periodic[d] == 1, D), faces...,
                      rotating=rotating, halfturn=halfturn,
                      extents=ntuple(d -> (extents[1, d], extents[2, d]), D),
                      leaves=leaves, comm=comm)
+end
+
+# The patches and the glue table of `write_patches`, as the arguments of
+# the patches form of `Forest`. Only their shapes and types are checked
+# here; what they say — roots, extents, faces, maps, that every gluing is
+# listed both ways — is checked by the forest, as a caller's would be.
+function read_patches(g, ::Val{D}, ::Type{R}, F, limbs, note) where {D,R}
+    for name in ("patch_roots", "patch_extents", "glue_from", "glue_to", "glue_map")
+        haskey(g, name) || throw(ArgumentError(
+            "the forest is made of patches, but has no `$name` dataset, which every " *
+            "file over patches stores: the file is damaged. " * note))
+    end
+    count(dset) = (dims = size(dset); length(dims) == 2 ? dims[2] : 0)
+    np, ng = count(g["patch_roots"]), count(g["glue_from"])
+    roots = read_array(g["patch_roots"], Int64, (D, np), "the patches' roots", note)
+    extents = read_array!(Array{R}(undef, 2, D, np), g["patch_extents"], F,
+                          (limbs..., 2, D, np), "the patches' extents", note)
+    from = read_array(g["glue_from"], Int64, (3, ng), "the glue's faces", note)
+    to = read_array(g["glue_to"], Int64, (3, ng), "the glue's faces", note)
+    maps = read_array(g["glue_map"], Int64, (D, ng), "the glue's maps", note)
+    patches = [(roots=ntuple(d -> Int(roots[d, p]), D),
+                extents=ntuple(d -> (extents[1, d, p], extents[2, d, p]), D))
+               for p in 1:np]
+    glue = [(from=ntuple(i -> Int(from[i, j]), 3), to=ntuple(i -> Int(to[i, j]), 3),
+             map=ntuple(a -> Int(maps[a, j]), D))
+            for j in 1:ng]
+    return patches, glue
 end
 
 # The rotating seam's pair (M12), or the half turn's (TreeAMR's M14), as

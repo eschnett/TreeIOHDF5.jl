@@ -9,6 +9,7 @@
 - [Release 0.1.4](#release-014)
 - [Release 0.1.5](#release-015)
 - [Release 0.1.6](#release-016)
+- [Forests of patches](#forests-of-patches)
 
 ## Release 0.1.0
 
@@ -86,3 +87,22 @@ registered TreeAMR 0.2.7, and the docs build with their doctest.
 
 1. Tag and register 0.1.6. *Done when* CI is green on GitHub and the
    package resolves from General.
+
+## Forests of patches
+
+For TreeAMR's M17 (`CODE.md`, "Forests of patches" under "Checkpoint
+and restart"): a forest of patches saved as its patches and glue table,
+under the feature `patches` in place of `brick`, with no format bump.
+Implemented on the branch `eschnett-claude/multi-patch`, which starts
+from 0.1.6's and takes TreeAMR through `[sources]` from the checkout
+beside this one (`../TreeAMR`, branch `eschnett-claude/multi-patch`,
+still versioned 0.2.7); 1088 tests pass against it at one thread.
+
+1. Once TreeAMR releases M17, replace the `[sources]` path entries in
+   `Project.toml`, `test/Project.toml` and `docs/Project.toml` by that
+   release (by its PR branch until it is registered, then by nothing),
+   set `[compat] TreeAMR` to that version alone — the save calls
+   `patch_keywords`, which 0.2.7 does not have — and the package
+   version to the next patch release; run the suite and the docs build
+   against it. *Done when* it is tagged and registered after 0.1.6, and
+   CI is green on GitHub.

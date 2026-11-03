@@ -42,7 +42,8 @@ supports Julia 1.13 and later, as TreeAMR does, and CI tests 1.13 only
 TreeIOHDF5 is a companion package of TreeAMR: it provides infrastructure,
 and so it uses TreeAMR's internals — the communicator verbs, the
 cross-rank agreement (`ForestDigest`, `digest_verdict`, `layouthash`),
-the seam (`hasrotating`, `rotating_dims`, `ishalfturn`, `halfturn_dims`), the face kinds
+the seam (`hasrotating`, `rotating_dims`, `ishalfturn`, `halfturn_dims`), the
+patches (`patch_keywords`), the face kinds
 (`reflecting_faces`, `outflow_faces`), the partition and thread
 helpers, `tohost` and `samebackend`, and the fields of `Forest`,
 `FieldSet` and `MortonKey` — beside its exports. The list, and why it is
@@ -61,7 +62,8 @@ it.
   application's to rebuild with its own operators and hook. A load
   builds the forest through the validated `leaves` path
   (`Forest(roots; …, leaves)`, which refuses a list that does not tile
-  the brick or is not balanced) and the field set through its
+  the brick or is not balanced, or `Forest(patches; glue, …, leaves)`
+  for a forest of patches, which checks the glue too) and the field set through its
   constructor, so nothing read is trusted before they check it.
   Compatibility is the file's `format_version` plus a must-understand
   `features` list, never package versions; each refusal says why and
@@ -120,7 +122,7 @@ what cannot be recomputed, and nothing else:
 
 | Item | Handling | Why |
 |---|---|---|
-| Forest: `D`, the geometry type, `roots`, `periodic`, `reflecting`, `outflow`, `rotating` or `halfturn`, `extents` (bitwise, in the geometry type), `N` | saved | the inputs the forest was built from |
+| Forest: `D`, the geometry type, `roots`, `periodic`, `reflecting`, `outflow`, `rotating` or `halfturn`, `extents` (bitwise, in the geometry type), `N`; for a forest of patches, each patch's roots and extents and the glue in place of `roots`, `periodic` and `extents` | saved | the inputs the forest was built from |
 | Forest: the leaf list | saved | the only record of the mesh's history |
 | Forest: `generation` | not saved | a staleness counter, meaningless in another process |
 | Field set: element type, `nvars`, `G`, `centering`, `P`, `walls`, `parity`, `rotation` | saved | its layout |
@@ -393,6 +395,64 @@ saved, the element family `ElementLocal` included: like every family,
 it is the application's input, and it has no orders to record. `P`
 joins what the ranks agree on about a field set before a save.
 
+**Forests of patches** (no format bump). A forest of several bricks of
+roots glued at their faces by signed axis permutations (TreeAMR's M17,
+`Forest(patches; glue, …)`) is saved as the arguments of that
+constructor, which TreeAMR's `patch_keywords` gives back, and nothing
+derived from them. Its `forest/` group has `connectivity = "patches"`
+and, in place of the brick's `roots`, `periodic` and `extents`, five
+datasets beside the leaf columns:
+
+    forest/              attrs: D, N, connectivity = "patches",
+                                reflecting (2, D) [, outflow (2, D)],
+                                geometry_type […], leaves_crc32c
+      patch_roots        Int64[D, npatches]
+      patch_extents      (limbs?, 2, D, npatches), in the geometry type,
+                         bitwise
+      glue_from          Int64[3, nglue]  (patch, dim, side), side 1 low,
+                                          2 high
+      glue_to            Int64[3, nglue]
+      glue_map           Int64[D, nglue]  the signed axis map: entry e is
+                                          ±a where axis e of the patch
+                                          `from` names runs along axis a
+                                          of the patch `to` names,
+                                          reversed where negative
+      root, level, coords                 as for a brick
+
+- **The glue as given, both ways, in canonical order.** A column is one
+  glued face, every gluing listed from both of its faces, ordered by the
+  face's patch, then its dimension, then its side, which is the order
+  `patch_keywords` returns whatever order the forest was built from, so
+  one forest writes one file. What the forest derives from the glue —
+  the offsets between the patches, its dense table of faces, whether it
+  has a patch corner — is not stored, since a stored copy could only
+  disagree, and the patches' extents are stored bitwise, as a brick's
+  are. `reflecting` and `outflow` keep their shape: they name the faces
+  `(dim, side)` of every patch that are not glued.
+- **The feature `patches` takes the place of `brick`.** The connectivity
+  is the first thing a reader must understand, and `brick` was always
+  listed for it; a reader from before M17 does not know `patches` and
+  refuses the file by it, saying why (checked against 0.1.6), where
+  without the feature it would find no `roots` and fail without a
+  reason. The connectivity and the feature go together: a file with one
+  and not the other was not written by any TreeAMR, and is refused as
+  damaged, as is a missing dataset or one of the wrong shape or type.
+- **Checked by the forest.** The load passes the patches and the glue to
+  `Forest{R}(patches; N, glue, reflecting, outflow, leaves, comm)`, so a
+  map that is not a signed permutation, a gluing not listed back by its
+  inverse, a face that does not exist, a patch of another cell size and
+  a leaf list that is not conforming across a glued face are refused
+  with the forest's own reasons, as a caller's would be. So is a seam
+  in the file of a forest of patches, which the patches form refuses.
+- **No format bump**, for the reasons the seams had none: the file of a
+  brick is what it was — its `forest/` group was checked identical, as
+  `h5dump` prints it, to 0.1.6's for the same forest, and 0.1.6 reads
+  it — so a bump would have made every file this version writes
+  unreadable to the readers before it, for nothing they misread, while
+  a version that only a file over patches carries would say what the
+  feature already says. `connectivity` was a tagged record from the
+  start for this ("Multi-block" below).
+
 **Element types**.
 
 - **Native types** — `Float16`, `Float32`, `Float64`, the signed and
@@ -444,8 +504,10 @@ with the reason, and defaults are supplied where they are obvious.
   add `outflow`, listed only by a file whose forest has one (see
   "Outflow faces" above), symmetric walls `symmetric_walls`, listed
   only by a file holding a set that has them (see "Symmetric walls"
-  above), and TreeAMR's M16 `elements`, listed only by a file holding
-  an element-centered set (see "Element sets" above).
+  above), TreeAMR's M16 `elements`, listed only by a file holding
+  an element-centered set (see "Element sets" above), and TreeAMR's M17
+  `patches`, listed by a file whose forest is made of patches in place
+  of `brick` (see "Forests of patches" above).
 - **Refusals are `ArgumentError`s that say why.** They name the TreeAMR
   version that wrote the file, from `provenance`, and point to
   `checkpoint_environment(path, dir)`. That writes the stored
@@ -510,7 +572,9 @@ with the reason, and defaults are supplied where they are obvious.
    `Forest{R}(roots; N, periodic, reflecting, extents, leaves)`, which
    refuses a list that does not tile the brick exactly or is not
    balanced, so that a damaged or hand-edited file cannot yield a mesh
-   the schedule would silently get wrong.
+   the schedule would silently get wrong; a forest of patches through
+   `Forest{R}(patches; N, glue, reflecting, outflow, leaves)`, which
+   checks the glue as well.
 2. `FieldSet{T}(forest, nvars; G, centering, parity, backend)`.
 3. `u = statevector(fs)`: allocated on the backend and first-touched by
    the block owners, so NUMA placement is right although the HDF5 read
@@ -639,13 +703,14 @@ is why `sync = true` is the default.
 The facts about parallel HDF5 checked before M7, the shared-file design they led to, and why it was replaced by the part files are in [HISTORY.md](HISTORY.md#checkpoint-and-restart) and under "Checkpoints without parallel I/O" in [Distributed meshes](https://github.com/eschnett/TreeAMR.jl/blob/main/CODE.md#distributed-meshes).
 
 **Multi-block**. Keys are relative to their root,
-`connectivity = "brick"` is a tagged record rather than an assumption,
-and no coordinates are stored. A conforming multi-block forest, the
-likely route to spherical domains, is then a new connectivity kind,
-with whatever describes its roots stored beside the leaves, plus a
-feature name. Nothing in the format obstructs it. Parthenon's layout
-would: it stores global tree locations in one virtual tree over the
-root grid, which a multi-block forest cannot express.
+`connectivity` is a tagged record rather than an assumption, and no
+coordinates are stored. So a conforming multi-block forest, the route to
+spherical domains, came in as a new connectivity kind, `"patches"`, with
+what describes its roots stored beside the leaves and a feature name
+("Forests of patches" above), and nothing else changed. Parthenon's
+layout would have obstructed it: it stores global tree locations in one
+virtual tree over the root grid, which a multi-block forest cannot
+express.
 
 The survey of existing formats that this layout follows from (formats considered, and the one modelled) is in [HISTORY.md](HISTORY.md#checkpoint-and-restart).
 
@@ -654,6 +719,7 @@ and the refusals say why.
 
     # TreeAMR: a forest from a validated leaf list
     Forest{T}(roots; N, periodic, reflecting, extents, leaves)
+    Forest{T}(patches; N, glue, reflecting, outflow, leaves)  # M17
 
     # TreeIOHDF5
     save_checkpoint(path, forest;                    # returns path
@@ -1035,7 +1101,11 @@ always, and CUDA or Metal with `TREEAMR_TEST_BACKEND`), `partition_tests.jl`
 
 `checkpoint_tests.jl` checks a bitwise round trip over every centering,
 `Float64`/`Float32`/`Float32x2` and every face kind, an element set
-beside a cell set in each dimension, through a fill and a regrid, restarts of the
+beside a cell set in each dimension, through a fill and a regrid, forests
+of patches — the annulus with cell, vertex and element sets, two patches
+with swapped and reversed axes over `Float32x2` extents, the cubed
+sphere's element set — through a fill and a regrid, with their digest,
+the patches' refusals and a brick's file unchanged, restarts of the
 wave and Burgers studies that continue byte for byte through regrids,
 the refusals with their reasons, the checksums (a damaged block, a
 recomputed one, missing ones), the atomic write and a failing I/O
@@ -1055,7 +1125,8 @@ starts both jobs at the start of the suite where the machine has room.
 The workload is TreeAMR's, reduced to the cases that end in a checkpoint
 — a rank without blocks (E2), a rotating quadrant and its pair (Q2), a
 single leaf at the axis (QE2) — an element set beside a cell set (EC),
-and the chunked restarts (C, C1) and the refusals. Each run writes its files to one directory
+both over the annulus of patches (PC), and the chunked restarts (C, C1)
+and the refusals. Each run writes its files to one directory
 (`TREEAMR_CHECKPOINT_DIR`), and a run that loads another rank count's
 files waits for that run's marker (`TREEAMR_CHECKPOINT_FROM`), so the
 serial reference, three ranks and two ranks may run at once.

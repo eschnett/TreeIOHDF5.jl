@@ -73,7 +73,9 @@ application's own that are not plain data.
 
 What cannot be recomputed, and nothing else: the forest's parameters
 (`D`, `N`, the roots, `periodic`, `reflecting`, `outflow`, `rotating` or `halfturn`, the extents
-bit for bit in the geometry type) and its leaf list, in curve order; and
+bit for bit in the geometry type; for a forest of patches, TreeAMR's M17,
+each patch's roots and extents and the glue table instead of the roots,
+`periodic` and the extents) and its leaf list, in curve order; and
 for each field set its element type, `nvars`, `G`, centering, the order
 `P` of an element set, parity, rotation and half-turn map, and its
 **owned** points, in state-vector layout. Not saved:
@@ -90,7 +92,11 @@ readable by every earlier reader of its format version. A half-turn seam
 (TreeAMR's M14) is recorded the same way, by the feature `halfturn`. Outflow faces
 are recorded the same way, by the feature `outflow`, and a field set's
 symmetric walls (`walls = :symmetric`) by the feature `symmetric_walls`,
-and an element-centered set (TreeAMR's M16) by the feature `elements`.
+an element-centered set (TreeAMR's M16) by the feature `elements`, and a
+forest of patches by the feature `patches`, which takes the place of
+`brick`: a reader from before them refuses the file rather than lose the
+glue. A forest of patches is rebuilt through the patches form of
+`Forest`, which checks the glue as it would a caller's.
 Beside the leaf
 list and each field set go CRC-32C checksums, one over the leaf list and
 one per block, which `load_checkpoint` verifies (added in M7, after a
