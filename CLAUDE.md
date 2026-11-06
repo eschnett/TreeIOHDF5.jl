@@ -139,5 +139,9 @@ The jobs write SimWatch status files through `bench/simwatch.sh`.
   `burgers.jl` are verbatim copies of TreeAMR's; the `CODE.md` they cite
   is TreeAMR's.
 - Julia 1.13 is the floor, as for TreeAMR (`HISTORY.md`, "The Julia
-  floor"); CI tests 1.13 only, on Linux and macOS.
+  floor"); CI tests 1.13 only. A pull request runs only the Linux cells,
+  without coverage; macOS and coverage run on `main`, weekly and on
+  dispatch, and Markdown-only changes run nothing (`HISTORY.md`, "CI").
+  So **run the full suite locally before opening a pull request**: that
+  is the macOS run the pull request does not get.
 - All `Manifest.toml` files and `docs/build/` are gitignored.
