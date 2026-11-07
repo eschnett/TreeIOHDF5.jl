@@ -16,6 +16,7 @@ records are in
 - [Checkpoint and restart](#checkpoint-and-restart)
 - [Checkpoints over MPI](#checkpoints-over-mpi)
   - [Parallel checkpoints](#parallel-checkpoints)
+- [CI](#ci)
 
 ## The split from TreeAMR
 
@@ -396,3 +397,17 @@ shared-file layout need not.
   on BeeGFS the same `pwrite`s were exact in 200 of 200. Neither file
   system is coherent between nodes; they fail differently, and a
   shared file is safe only when the MPI-IO layer knows how each fails.
+
+## CI
+
+On 2026-11-05 Erik moved all eight Tree* repositories to two CI tiers at
+once; TreeAMR's `HISTORY.md` ("Development environment and CI") has the
+measurements. A pull request runs the Linux cells only, uninstrumented;
+a push to `main`, a weekly schedule and manual dispatch add the macOS
+cells and coverage; Markdown and `docs/` changes and tags run nothing.
+Here the four cells had taken 9–14 min, so the gain is mostly the
+skipped runs (14 of the last 15 commits on `main` touched only Markdown
+or `docs/`) and the macOS slots, which the account shares across the
+repositories. Coverage moved from both one-thread cells to the macOS
+one alone, because Linux runners miscompile under coverage and bounds
+checks together (TreeGeneralizedHarmonic's CI.yml has the probes).
