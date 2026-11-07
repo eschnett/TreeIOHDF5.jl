@@ -9,7 +9,7 @@
 - [Release 0.1.4](#release-014)
 - [Release 0.1.5](#release-015)
 - [Release 0.1.6](#release-016)
-- [Forests of patches](#forests-of-patches)
+- [Release 0.1.7](#release-017)
 
 ## Release 0.1.0
 
@@ -79,30 +79,19 @@ unchanged; 889 tests pass against the registered TreeAMR 0.2.6.
 
 ## Release 0.1.6
 
-Element sets, for TreeAMR 0.2.7 (TreeAMR's M16; `CODE.md`, "Element
-sets" under "Checkpoint and restart"): a set's order `P` as an attribute,
-under the feature `elements`. `[compat] TreeAMR = "=0.2.7"` alone, since
-the save reads `FieldSet`'s new field `P`. 974 tests pass against the
-registered TreeAMR 0.2.7, and the docs build with their doctest.
+Done: element sets, for TreeAMR 0.2.7 (TreeAMR's M16; `CODE.md`,
+"Element sets" under "Checkpoint and restart"), under the feature
+`elements`; 974 tests pass against the registered TreeAMR 0.2.7.
 
-1. Tag and register 0.1.6. *Done when* CI is green on GitHub and the
+## Release 0.1.7
+
+Forests of patches, for TreeAMR 0.2.8 (TreeAMR's M17; `CODE.md`,
+"Forests of patches" under "Checkpoint and restart"): a forest of
+patches saved as its patches and glue table, under the feature
+`patches` in place of `brick`, with no format bump. `[compat] TreeAMR =
+"=0.2.8"` alone, since the save calls `patch_keywords`, which 0.2.7 does
+not have. 1088 tests pass against the registered TreeAMR 0.2.8, and
+the docs build with their doctest.
+
+1. Tag and register 0.1.7. *Done when* CI is green on GitHub and the
    package resolves from General.
-
-## Forests of patches
-
-For TreeAMR's M17 (`CODE.md`, "Forests of patches" under "Checkpoint
-and restart"): a forest of patches saved as its patches and glue table,
-under the feature `patches` in place of `brick`, with no format bump.
-Implemented on the branch `eschnett-claude/multi-patch`, which starts
-from 0.1.6's and takes TreeAMR through `[sources]` from the checkout
-beside this one (`../TreeAMR`, branch `eschnett-claude/multi-patch`,
-still versioned 0.2.7); 1088 tests pass against it at one thread.
-
-1. Once TreeAMR releases M17, replace the `[sources]` path entries in
-   `Project.toml`, `test/Project.toml` and `docs/Project.toml` by that
-   release (by its PR branch until it is registered, then by nothing),
-   set `[compat] TreeAMR` to that version alone — the save calls
-   `patch_keywords`, which 0.2.7 does not have — and the package
-   version to the next patch release; run the suite and the docs build
-   against it. *Done when* it is tagged and registered after 0.1.6, and
-   CI is green on GitHub.

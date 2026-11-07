@@ -18,10 +18,5 @@ HDF5 = "0.17"
 MPI = "0.20"
 MultiFloats = "3"
 
-# TreeAMR's M17 (the forest of patches) is on the local branch
-# eschnett-claude/multi-patch of the TreeAMR checkout beside this one, not yet
-# pushed or released: take it from there. Replace this by the release once
-# there is one.
 [sources]
-TreeAMR = {path = "../../TreeAMR"}
 TreeIOHDF5 = {path = ".."}
