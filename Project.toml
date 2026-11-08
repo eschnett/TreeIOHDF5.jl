@@ -12,7 +12,7 @@ TreeAMR = "91bc416d-811c-44c1-9bc4-b9c8bbdbbd08"
 [compat]
 CRC32c = "1"
 HDF5 = "0.17"
-KernelAbstractions = "0.9.42, 1"
+KernelAbstractions = "0.9.42"
 # Exact versions only: this package uses TreeAMR's companion interface,
 # which TreeAMR's semantic versioning does not cover (TreeAMR's `CODE.md`,
 # "Companion interface"). Append a version once this package's suite has
