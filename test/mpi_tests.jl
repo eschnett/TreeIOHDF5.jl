@@ -3,7 +3,8 @@
 # `test/mpi_workload.jl` runs the cases of TreeAMR's MPI workload that
 # end in a checkpoint — a rank with no blocks, a rotating quadrant with a
 # set that turns into itself and a `RotationPair`, a single leaf at the
-# axis, and an element set beside a cell set — and then a run
+# axis, an element set beside a cell set, and both over a forest of
+# patches — and then a run
 # checkpointed after a regrid, with a part file per rank, per I/O group
 # and per node, continued from each, the files of
 # the earlier runs, written at other rank counts, loaded and continued,
@@ -135,6 +136,12 @@ end
     esaved = words("EC saved")[3:4]
     @test words("EC loaded")[3:5] == ["3"; esaved]
     @test words("EC refilled")[3:4] == words("EC filled")[3:4]
+    # Over the forest of patches (M17): the checkpoint loads the patches,
+    # the glue and the states that were saved, and fills to what was filled.
+    pglue, psaved = words("PC glue")[3:4], words("PC saved")[3:4]
+    @test pglue[1] == "4"
+    @test words("PC loaded")[3:6] == [pglue; psaved]
+    @test words("PC refilled")[3:4] == words("PC filled")[3:4]
     # The comparison itself: a changed digest is caught, and so is a sum
     # that moved by more than roundoff — while the same sum to roundoff
     # is not.
@@ -163,6 +170,8 @@ end
         @test length(qc) == 1 && split(only(qc))[(end - 2):end] == qsaved
         ec = filter(startswith("# EC-n$from at $at loaded "), hashes)
         @test length(ec) == 1 && split(only(ec))[(end - 2):end] == ["3"; esaved]
+        pc = filter(startswith("# PC-n$from at $at loaded "), hashes)
+        @test length(pc) == 1 && split(only(pc))[(end - 3):end] == [pglue; psaved]
     end
 
     outs = Dict{Int,String}()
@@ -255,6 +264,7 @@ end
         Base.invokelatest(workload.checkpoint_cross, "C")
         Base.invokelatest(workload.rotating_cross, "QC")
         Base.invokelatest(workload.element_cross, "EC")
+        Base.invokelatest(workload.patch_cross, "PC")
     end
     hashes = workload_lines(String(take!(io)))
     for from in (2, 3)

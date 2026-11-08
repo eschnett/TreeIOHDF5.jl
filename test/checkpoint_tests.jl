@@ -962,6 +962,275 @@ end
     @test_throws "so the field set needs `halfturn`" load_checkpoint(mapless)
 end
 
+# --- forests of patches (TreeAMR's M17) -----------------------------------------
+#
+# A forest of patches is saved as its patches and its glue table under the
+# feature `patches`, in place of `brick`; a reader that lost the glue would
+# load every glued face as an outer one, and one that misread a map would
+# turn the data across it, which only the next fill would show. The
+# forests are those of TreeAMR's `test/patch_tests.jl`: the annulus, two
+# patches with swapped and reversed axes, and the cubed sphere.
+
+# Both directions of the gluing of face `from` to face `to` by the signed
+# permutation `σ`: the entry as given, and its inverse.
+function glue_both(from, to, σ)
+    D = length(σ)
+    τ = ntuple(D) do a
+        e = findfirst(e -> abs(σ[e]) == a, 1:D)
+        return sign(σ[e]) * e
+    end
+    return [(from=from, to=to, map=σ), (from=to, to=from, map=τ)]
+end
+
+# The annulus: four patches of `(2, 1)` roots, angle along dimension 1 and
+# radius along 2, each glued at its high face of dimension 1 to the low
+# face of the next with the identity, so that it has no patch corner and
+# every centering runs.
+annulus(::Type{T}; N=4) where {T} =
+    Forest{T}([(roots=(2, 1), extents=((0, 2), (1, 2))) for _ in 1:4]; N=N,
+              glue=reduce(vcat, [glue_both((p, 1, 2), (mod1(p + 1, 4), 1, 1), (1, 2))
+                                 for p in 1:4]))
+
+# Two patches with their axes swapped and both reversed, the high face of
+# dimension 1 of the first glued to the high face of dimension 2 of the
+# second, over extents of their own: a cell set and an element set run, a
+# vertex set is refused (a reversed vertex-like dimension).
+swapped_pair(::Type{T}; N=4) where {T} =
+    Forest{T}([(roots=(2, 3),), (roots=(3, 2), extents=((5, 8), (-2, 0)))]; N=N,
+              glue=glue_both((1, 1, 2), (2, 2, 2), (-2, -1)))
+
+# The six faces of the cube `[-1, 1]³`, each a patch `(ξ, η, r)` over
+# `[-1, 1]² × [1, 2]`, with the frame `(n, u, v)` its point `n + ξ u + η v`
+# is placed by, and the glue derived from the frames (as in TreeAMR's
+# `test/patch_tests.jl`, which says how). It has patch corners, so only an
+# element set runs.
+const CUBE_FRAMES = (([1, 0, 0], [0, 1, 0], [0, 0, 1]),
+                     ([-1, 0, 0], [0, 0, 1], [0, 1, 0]),
+                     ([0, 1, 0], [0, 0, 1], [1, 0, 0]),
+                     ([0, -1, 0], [-1, 0, 0], [0, 0, 1]),
+                     ([0, 0, 1], [1, 0, 0], [0, 1, 0]),
+                     ([0, 0, -1], [0, 1, 0], [-1, 0, 0]))
+
+function cubed_sphere_glue()
+    glue = []
+    for (p, (n, u, v)) in enumerate(CUBE_FRAMES), d in 1:2, s in 1:2
+        a = (u, v)
+        q = findfirst(f -> f[1] == (s == 2 ? 1 : -1) .* a[d], CUBE_FRAMES)
+        aq = CUBE_FRAMES[q][2:3]
+        d2, s2 = only((d2, s2) for d2 in 1:2 for s2 in 1:2
+                      if (s2 == 2 ? 1 : -1) .* aq[d2] == n)
+        t, t2 = 3 - d, 3 - d2
+        σ = Base.setindex(Base.setindex((0, 0, 3),
+                                        (s2 == 1 ? 1 : -1) * (s == 2 ? 1 : -1) * d2, d),
+                          (a[t] == aq[t2] ? 1 : -1) * t2, t)
+        push!(glue, (from=(p, d, s), to=(q, d2, s2), map=σ))
+    end
+    return glue
+end
+
+cubed_sphere(::Type{T}; N=4) where {T} =
+    Forest{T}([(roots=(2, 2, 1), extents=((-1, 1), (-1, 1), (1, 2))) for _ in 1:6]; N=N,
+              glue=cubed_sphere_glue())
+
+# Refine the first leaf and balance, which across a glued face refines the
+# leaf there too: a forest on two levels, coarse-fine at edges across the
+# glue.
+function refine_first!(forest)
+    refine!(forest, [forest.leaves[1]])
+    balance!(forest)
+    return forest
+end
+
+const PATCH_OPS = Operators(prolongation=2, restriction=2)
+const PATCH_ELEMENT_OPS = Operators(family=ElementLocal)
+patch_ops(fs) = fs.P > 0 ? PATCH_ELEMENT_OPS : PATCH_OPS
+
+# The cases: a name, the forest, the geometry type, the field type and the
+# centerings. Polynomial data, since `Float32x2` has no `sin`; noise makes
+# every value structureless all the same.
+const PATCH_CASES = [
+    ("the annulus", () -> refine_first!(annulus(Float64)), Float64,
+     [cellcentered(2), vertexcentered(2), elementcentered(2)]),
+    ("two patches swapped and reversed", () -> refine_first!(swapped_pair(Float32x2)),
+     Float32x2, [cellcentered(2), elementcentered(2)]),
+    ("the cubed sphere", () -> refine_first!(cubed_sphere(Float32)), Float32,
+     [elementcentered(3)])]
+
+@testset "A forest of patches round-trips bit for bit, its glue included: $name" for
+        (name, build, T, centerings) in PATCH_CASES
+    # The failure: a forest back without its glue, or with a glue that
+    # differs in a map, a face or an extent — which builds, and turns or
+    # misplaces whatever crosses it — or a field set that comes back over
+    # another forest. So the forest's patches and glue, its digest, the
+    # patch of every block, the states, and the working arrays after both
+    # sides fill and regrid the same way are compared exactly, and the file
+    # lists `patches` and not `brick`.
+    forest = build()
+    D = length(forest.roots)
+    @test TreeAMR.patch_keywords(forest) !== nothing
+    f = WithPatch((x, p, v) -> v + p / 3 + x[1] / 5 - x[D]^2 / 7 + x[1] * x[D] / 11)
+    hook = boundary_by_coordinates(f)
+    sets = [FieldSet{T}(forest, 2; G=1, centering=C,
+                        P=first(C) === :element ? 1 : nothing)
+            for C in centerings]
+    rng = MersenneTwister(17)
+    states = map(sets) do fs
+        fill_by_coordinates!(f, fs)
+        u = statevector(fs)
+        gather!(u, fs)
+        u .+= T.(rand(rng, length(u))) ./ 64
+        scatter!(fs, u)
+        u
+    end
+    names = ["s$i" for i in eachindex(sets)]
+    path = joinpath(mktempdir(), "patches.h5")
+    save_checkpoint(path, forest; fieldsets=Tuple(n => (fs, u) for (n, fs, u) in
+                                                  zip(names, sets, states)),
+                    application="Patches" => 1)
+    @test file_features(path) == ["patches"; any(fs -> fs.P > 0, sets) ? ["elements"] : []]
+    h5open(path) do file
+        g = file["TreeAMR.jl/forest"]
+        @test read_attribute(g, "connectivity") == "patches"
+        @test !any(n -> haskey(attributes(g), n), ("roots", "periodic"))
+        @test !haskey(g, "extents")
+        @test size(g["patch_roots"]) == (D, TreeAMR.npatches(forest))
+    end
+    ck = load_checkpoint(path; types=(Float32x2,))
+    kw, kw′ = TreeAMR.patch_keywords(forest), TreeAMR.patch_keywords(ck.forest)
+    @test kw′.glue == kw.glue
+    @test [p.roots for p in kw′.patches] == [p.roots for p in kw.patches]
+    @test all(zip(kw′.patches, kw.patches)) do (a, b)
+        return all(d -> all(s -> a.extents[d][s] === b.extents[d][s], 1:2), 1:D)
+    end
+    @test ck.forest.leaves == forest.leaves
+    @test ck.forest.faces == forest.faces
+    @test block_patches(ck.forest) == block_patches(forest)
+    digest, digest′ = (TreeAMR.ForestDigest(x, UInt(0), false)
+                       for x in (forest, ck.forest))
+    @test (digest′.nleaves, digest′.leaves, digest′.brick) ==
+          (digest.nleaves, digest.leaves, digest.brick)
+    loaded = map(n -> ck.fieldsets[n].fieldset, names)
+    for (fs, back, n, u) in zip(sets, loaded, names, states)
+        @test back.forest === ck.forest
+        @test (back.G, back.centering, back.P) == (fs.G, fs.centering, fs.P)
+        @test eltype(back.work) === T
+        @test bytes(ck.fieldsets[n].state) == bytes(u)
+    end
+    scheds = map(fs -> GhostSchedule(fs, patch_ops(fs)), sets)
+    lscheds = map(fs -> GhostSchedule(fs, patch_ops(fs)), loaded)
+    for (fs, back, s, ls) in zip(sets, loaded, scheds, lscheds)
+        fill_ghosts!(fs, s; boundary=hook)
+        fill_ghosts!(back, ls; boundary=hook)
+        @test bytes(back.work) == bytes(fs.work)
+    end
+    # The last block refined, in both runs: the regrid balances across the
+    # glue of the loaded forest as across the saved one's.
+    flags(fs) = [b == nblocks(fs) ? Refine : Keep for b in 1:nblocks(fs)]
+    @test regrid!(forest, Tuple(fs => s for (fs, s) in zip(sets, scheds));
+                  flags=flags(sets[1]), boundary=hook)
+    @test regrid!(ck.forest, Tuple(fs => s for (fs, s) in zip(loaded, lscheds));
+                  flags=flags(loaded[1]), boundary=hook)
+    @test ck.forest.leaves == forest.leaves
+    for (fs, back) in zip(sets, loaded)
+        @test bytes(back.work) == bytes(fs.work)
+    end
+end
+
+@testset "A file over patches that hides or damages its glue is refused, saying why" begin
+    # The failure: a file over patches read by a reader that does not know
+    # them, which would build some brick or fail without saying why; or a
+    # file whose connectivity and feature disagree, or whose patches or glue
+    # are missing or damaged, read anyway. What the glue says is checked by
+    # the forest, as a caller's is, so its refusals are the forest's own.
+    forest = annulus(Float64)
+    fs = FieldSet(forest, 1; G=1)
+    fill_by_coordinates!(WithPatch((x, p, v) -> p + x[1]), fs)
+    dir = mktempdir()
+    path = joinpath(dir, "patches.h5")
+    save_checkpoint(path, forest; fieldsets=("u" => fs,), application="Patches" => 1)
+    @test load_checkpoint(path).forest.leaves == forest.leaves
+    @test "patches" in TreeIOHDF5.FEATURES
+
+    # A reader that does not know the feature refuses the file by it.
+    unknown = edited_copy(path, "unknown.h5") do file
+        replace_attribute!(file["TreeAMR.jl"], "features", ["patches2"])
+    end
+    @test_throws "the feature \"patches2\"" load_checkpoint(unknown)
+    unlisted = edited_copy(path, "unlisted.h5") do file
+        replace_attribute!(file["TreeAMR.jl"], "features", ["brick"])
+    end
+    @test_throws "does not list the feature \"patches\"" load_checkpoint(unlisted)
+    bricked = edited_copy(path, "bricked.h5") do file
+        replace_attribute!(file["TreeAMR.jl/forest"], "connectivity", "brick")
+    end
+    @test_throws "but its forest's connectivity is \"brick\"" load_checkpoint(bricked)
+    other = edited_copy(path, "other.h5") do file
+        replace_attribute!(file["TreeAMR.jl/forest"], "connectivity", "cubes")
+    end
+    @test_throws "reads only \"brick\" and \"patches\"" load_checkpoint(other)
+    for name in ("patch_roots", "patch_extents", "glue_from", "glue_to", "glue_map")
+        missing = edited_copy(path, "missing.h5") do file
+            delete_object(file["TreeAMR.jl/forest"], name)
+        end
+        @test_throws "has no `$name` dataset" load_checkpoint(missing)
+    end
+    reshaped = edited_copy(path, "reshaped.h5") do file
+        g = file["TreeAMR.jl/forest"]
+        delete_object(g, "glue_map")
+        g["glue_map"] = ones(Int64, 3, 8)
+    end
+    @test_throws "the glue's maps has dimensions (3, 8) where the layout needs (2, 8)" (
+        load_checkpoint(reshaped))
+    # The glue as stored is checked by the forest: a map whose reverse is
+    # not its inverse, a face of a patch that does not exist, and a patch
+    # whose roots are twice as wide as the others'.
+    turned = edited_copy(path, "turned.h5") do file
+        g = file["TreeAMR.jl/forest"]
+        maps = read(g["glue_map"])
+        maps[2, 1] = -maps[2, 1]
+        delete_object(g, "glue_map")
+        g["glue_map"] = maps
+    end
+    @test_throws "each the inverse of the other" load_checkpoint(turned)
+    astray = edited_copy(path, "astray.h5") do file
+        g = file["TreeAMR.jl/forest"]
+        to = read(g["glue_to"])
+        to[1, 1] = 9
+        delete_object(g, "glue_to")
+        g["glue_to"] = to
+    end
+    @test_throws "patch 9" load_checkpoint(astray)
+    wider = edited_copy(path, "wider.h5") do file
+        g = file["TreeAMR.jl/forest"]
+        extents = read(g["patch_extents"])
+        extents[2, :, 3] .= (4.0, 3.0)
+        delete_object(g, "patch_extents")
+        g["patch_extents"] = extents
+    end
+    @test_throws "differ in cell size" load_checkpoint(wider)
+end
+
+@testset "A brick's file is what it was before patches" begin
+    # The failure: patches leaking into a brick's file — a feature that
+    # makes every earlier reader refuse it, or a dataset it does not know —
+    # so that a brick saved by this version no longer loads in the one
+    # before. So the forest group of a brick holds exactly the names it
+    # held, and the file lists `brick` alone.
+    forest = refine_first!(Forest((2, 1); N=4, extents=((0.0, 2.0), (1.0, 2.0))))
+    path = joinpath(mktempdir(), "brick.h5")
+    save_checkpoint(path, forest; fieldsets=("u" => FieldSet(forest, 1; G=1),),
+                    application="Brick" => 1)
+    @test file_features(path) == ["brick"]
+    h5open(path) do file
+        g = file["TreeAMR.jl/forest"]
+        @test sort(collect(keys(attributes(g)))) ==
+              ["D", "N", "connectivity", "geometry_type", "leaves_crc32c", "periodic",
+               "reflecting", "roots"]
+        @test sort(collect(keys(g))) == ["coords", "extents", "level", "root"]
+        @test read_attribute(g, "connectivity") == "brick"
+    end
+end
+
 # --- refusals ----------------------------------------------------------------
 
 @testset "A file this version cannot interpret is refused, saying why" begin

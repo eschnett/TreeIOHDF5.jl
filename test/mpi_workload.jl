@@ -47,7 +47,8 @@
 # and a `RotationPair` through a fill, a regrid, interpolation beyond the
 # seam and a checkpoint, loaded at the other rank counts as well. From
 # TreeAMR's M16 on it checkpoints an element set beside a cell set,
-# loaded at every rank count with its order.
+# loaded at every rank count with its order, and from M17 on both over a
+# forest of patches, loaded with its glue.
 
 using TreeAMR
 using MPI: MPI
@@ -618,11 +619,10 @@ function element_load(path, comm)
     return (ck.forest, ck.fieldsets["e"].fieldset, ck.fieldsets["c"].fieldset)
 end
 
-# The element checkpoints of the runs at other rank counts, loaded at
-# this one and, under MPI, at one rank over `MPI.COMM_SELF`: the order
-# and the states must be the saved ones. `#` lines, as in
-# `checkpoint_cross`.
-function element_cross(tag)
+# The checkpoints `tag` of the runs at other rank counts, each with the
+# rank counts to load it at: this one and, under MPI, one rank over
+# `MPI.COMM_SELF`.
+function other_runs(tag)
     dir = checkpoint_dir()
     counts = checkpoint_sources(dir, tag)
     names = filter(readdir(dir)) do name
@@ -632,9 +632,83 @@ function element_cross(tag)
         m[1] == tag && n != NRANKS && (counts === nothing || n in counts)
     end
     comms = USE_MPI ? ((NRANKS, COMM), (1, MPI.COMM_SELF)) : ((1, nothing),)
-    for name in sort(names), (n, comm) in comms
-        lforest, le, lc = element_load(joinpath(dir, name), comm)
-        emit("#", replace(name, ".h5" => ""), "at", n, "loaded", le.P,
+    return [(joinpath(dir, name), replace(name, ".h5" => ""), n, comm)
+            for name in sort(names) for (n, comm) in comms]
+end
+
+# The element checkpoints of the runs at other rank counts, loaded at
+# this one and at one rank: the order and the states must be the saved
+# ones. `#` lines, as in `checkpoint_cross`.
+function element_cross(tag)
+    for (path, name, n, comm) in other_runs(tag)
+        lforest, le, lc = element_load(path, comm)
+        emit("#", name, "at", n, "loaded", le.P, quad_states(lforest, le, lc)...)
+    end
+    return nothing
+end
+
+# --- forests of patches (TreeAMR's M17) -------------------------------------
+
+# The annulus: four patches of `(2, 1)` roots, each glued at its high face
+# of dimension 1 to the low face of the next with the identity, so that it
+# has no patch corner, with the first leaf refined, which `balance!`
+# carries across the glue to the leaf there.
+function annulus_of(N)
+    glue = [(from=(p, 1, 2), to=(mod1(p + 1, 4), 1, 1), map=(1, 2)) for p in 1:4]
+    glue = [glue; [(from=g.to, to=g.from, map=g.map) for g in glue]]
+    forest = Forest([(roots=(2, 1), extents=((0.0, 2.0), (1.0, 2.0))) for _ in 1:4]; N=N,
+                    glue=glue, comm=COMM)
+    refine!(forest, [forest.leaves[1]])
+    balance!(forest)
+    return forest
+end
+
+function patch_fill!(efs, cfs)
+    fill_ghosts!(efs, GhostSchedule(efs, OPSE); boundary=QUAD_HOOK)
+    fill_ghosts!(cfs, GhostSchedule(cfs, OPS4); boundary=QUAD_HOOK)
+    return nothing
+end
+
+# The patches and the glue as a forest gives them back, digested.
+patch_digest(forest) =
+    (TreeAMR.npatches(forest), digest(string(TreeAMR.patch_keywords(forest))))
+
+# An element set and a cell set over the annulus, filled across its glue
+# and saved with one part a node; loaded at this rank count, the forest
+# must come back with its patches and glue, both states as saved, and a
+# fill must give the working arrays the first fill gave. Then the files
+# of the runs at other rank counts, loaded at this one.
+function patch_case(tag)
+    forest = annulus_of(8)
+    emit(tag, "leaves", nleaves(forest), maxlevel(forest), digest(string(forest.leaves)))
+    emit(tag, "glue", patch_digest(forest)...)
+    efs = owned_pseudorandom!(FieldSet(forest, 2; G=1, centering=elementcentered(2), P=3))
+    cfs = owned_pseudorandom!(FieldSet(forest, 1; G=2))
+    patch_fill!(efs, cfs)
+    emit(tag, "filled", digest(gathered(forest, efs.work)),
+         digest(gathered(forest, cfs.work)))
+    dir = checkpoint_dir()
+    path = joinpath(dir, "$tag-n$NRANKS.h5")
+    emit(tag, "saved", quad_states(forest, efs, cfs)...)
+    save_checkpoint(path, forest; fieldsets=("e" => efs, "c" => cfs),
+                    application="Patches" => 1, io=:node)
+    lforest, le, lc = element_load(path, COMM)
+    emit(tag, "loaded", patch_digest(lforest)..., quad_states(lforest, le, lc)...)
+    patch_fill!(le, lc)
+    emit(tag, "refilled", digest(gathered(lforest, le.work)),
+         digest(gathered(lforest, lc.work)))
+    RANK == 0 && touch(joinpath(dir, "$tag-n$NRANKS.done"))
+    patch_cross(tag)
+    return nothing
+end
+
+# The checkpoints over patches of the runs at other rank counts, loaded at
+# this one and at one rank: the patches, the glue and the states must be
+# the saved ones.
+function patch_cross(tag)
+    for (path, name, n, comm) in other_runs(tag)
+        lforest, le, lc = element_load(path, comm)
+        emit("#", name, "at", n, "loaded", patch_digest(lforest)...,
              quad_states(lforest, le, lc)...)
     end
     return nothing
@@ -1021,6 +1095,9 @@ function main()
     # An element set beside a cell set (TreeAMR's M16), saved after a
     # fill and loaded at this rank count and the others.
     element_case("EC")
+    # An element set and a cell set over a forest of patches (TreeAMR's
+    # M17), the annulus, saved and loaded at this rank count and the others.
+    patch_case("PC")
     # Checkpoints: saved and loaded at this rank count, and the files of
     # the runs before this one loaded at it.
     checkpoint_case("C")
