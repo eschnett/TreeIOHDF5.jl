@@ -10,6 +10,7 @@
 - [Release 0.1.5](#release-015)
 - [Release 0.1.6](#release-016)
 - [Release 0.1.7](#release-017)
+- [Release 0.1.8](#release-018)
 
 ## Release 0.1.0
 
@@ -85,13 +86,16 @@ Done: element sets, for TreeAMR 0.2.7 (TreeAMR's M16; `CODE.md`,
 
 ## Release 0.1.7
 
-Forests of patches, for TreeAMR 0.2.8 (TreeAMR's M17; `CODE.md`,
-"Forests of patches" under "Checkpoint and restart"): a forest of
-patches saved as its patches and glue table, under the feature
-`patches` in place of `brick`, with no format bump. `[compat] TreeAMR =
-"=0.2.8"` alone, since the save calls `patch_keywords`, which 0.2.7 does
-not have. 1088 tests pass against the registered TreeAMR 0.2.8, and
-the docs build with their doctest.
+Done: forests of patches, for TreeAMR 0.2.8 (TreeAMR's M17; `CODE.md`,
+"Forests of patches" under "Checkpoint and restart"), under the feature
+`patches`; 1088 tests pass against the registered TreeAMR 0.2.8.
 
-1. Tag and register 0.1.7. *Done when* CI is green on GitHub and the
+## Release 0.1.8
+
+Compat only, for TreeAMR 0.2.9, the interpolation on element sets and
+patches (TreeAMR's M19, steps 1–7), which leaves the companion interface
+unchanged: `[compat] TreeAMR = "=0.2.8, =0.2.9"`. 1088 tests pass against
+the registered TreeAMR 0.2.9.
+
+1. Tag and register 0.1.8. *Done when* CI is green on GitHub and the
    package resolves from General.
