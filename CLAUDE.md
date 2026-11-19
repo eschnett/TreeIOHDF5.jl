@@ -76,33 +76,58 @@ each HDF5 filter setting, on a smooth wave pulse and a blast wave with a
 uniform atmosphere, and prints the file size, the ratio and GB/s for a
 save with `sync = false`, one with the default `sync = true` (which adds
 the flush to stable storage: `fsync`, or `F_FULLFSYNC` on macOS, where
-`fsync` does not wait), and a load. It runs in the test environment with
-the built-in filters only; the filter packages (H5Zzstd, H5Zlz4,
-H5Zbitshuffle) are used where the environment has them, which means a
-scratch environment that develops this checkout — never add them to
-`test/Project.toml`. `TREEAMR_BENCH_DIR` puts the files on the file
-system under test. A load right after a save reads the page cache;
-`CODE.md`'s "Throughput and filters" under "Checkpoint and restart" has
-the numbers and that caveat:
+`fsync` does not wait), and a load. It runs in the benchmarks' own
+environment, `bench/Project.toml`, which takes this checkout by path and
+adds MPI and the filter packages (H5Zzstd, H5Zlz4, H5Zbitshuffle); in
+the test environment it measures the built-in filters only — never add
+the filter packages to `test/Project.toml`. `TREEAMR_BENCH_DIR` puts the
+files on the file system under test. A load right after a save reads
+the page cache; `CODE.md`'s "Throughput and filters" under "Checkpoint
+and restart" has the numbers and that caveat:
 
 ```bash
-julia --project=test bench/checkpoint.jl
+julia --project=bench -e 'using Pkg; Pkg.instantiate()'
 ```
 
-`bench/symmetry_checkpoint_mpi.sh` (checkpoint throughput on BeeGFS: the
-shared file of TreeAMR's M7 step 6, then the part files of step 6b, once
-per `io` in `TREEAMR_CKPT_IO`) launches MPICH_jll through `srun
---mpi=pmi2` by default or a system MPI through MPIPreferences
-(`TREEAMR_MPI=system TREEAMR_MPI_MODULE=…`); it develops this checkout
-and TreeAMR beside it (`TREEAMR_REPO`, default `../TreeAMR`).
-`bench/symmetry_checkpoint_stress.sh` runs `bench/checkpoint_stress.jl`,
-the reproducers of the multi-node checkpoint loss, from
-`save_checkpoint` (now the part-file writer, verified by serial loads on
-two nodes; `STRESS_IO`) down to plain `pwrite`;
-`bench/checkpoint_inspect.jl` and `bench/checkpoint_layout.jl` read a
-damaged shared file of step 6. Nothing writes one file from several
-processes any more; anything that would must be checked with them first.
-The jobs write SimWatch status files through `bench/simwatch.sh`.
+```bash
+julia --project=bench bench/checkpoint.jl
+```
+
+Cluster jobs are SimLaunch specs in `jobs/` (`~/src/jl/SimLaunch`, its
+`SPEC.md` and `CONVERTING.md`; Symmetry's profile is Erik's own, in
+`~/.config/simlaunch/sites/`): `checkpoint-mpi.jl` is the checkpoint
+throughput on Symmetry's BeeGFS under MPICH_jll, `checkpoint-stress.jl`
+and `checkpoint-stress-hpcx.jl` run `bench/checkpoint_stress.jl`, the
+reproducers of the multi-node checkpoint loss, from `save_checkpoint`
+(now the part-file writer, verified by serial loads on two nodes;
+`STRESS_IO`) down to plain `pwrite`, and `checkpoint-smoke.toml` runs
+the benchmark at a size that takes seconds, on the laptop or anywhere.
+The study's project is `bench/`, so the snapshot is taken of it and the
+specs' commands are relative to it. Each spec's header says how to run
+it and what differs from the script it replaced; `simlaunch submit …
+--dry-run` shows the batch script without a connection. Submitting is a
+job on a cluster: ask Erik first. Which runs of a job finished is the
+submitter's to check (`simwatch --print <directory>`), and `submit --run
+<label>` names the missing ones.
+
+```bash
+simlaunch snapshot bench --study <study>
+```
+
+```bash
+simlaunch prepare <study> --site local --spec jobs/checkpoint-smoke.toml
+```
+
+```bash
+simlaunch submit <study> jobs/checkpoint-smoke.toml --site local --wait
+```
+
+The hand-written scripts they replaced were deleted on 2026-11-18, after
+each spec's run on Symmetry had been compared with theirs (`PLAN.md`,
+"Cluster jobs through SimLaunch"). `bench/checkpoint_inspect.jl` and
+`bench/checkpoint_layout.jl` read a damaged shared file of step 6.
+Nothing writes one file from several processes any more; anything that
+would must be checked with the stress reproducers first.
 
 ## Rules and sharp edges
 
