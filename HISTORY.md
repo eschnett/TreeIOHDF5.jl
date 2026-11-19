@@ -511,3 +511,16 @@ Open MPI again; behind it the spec ran all seven cases, ROMIO included
 605739): it comes and goes, as it did under MPICH. With that the two
 stress scripts and `bench/simwatch.sh` were deleted the same day, the
 last of the hand-written Symmetry scripts.
+
+On 2026-11-19 SimLaunch (at db87490) named kinds of node in the site
+profiles, spread an `mpiexec` run's ranks evenly over its nodes, and
+stopped passing the caller's `JULIA_CPU_TARGET` to jobs. The specs
+needed no change. They run on Symmetry's default kind, `amd`, in `amdq`
+and without cn112, as before. Every run of the HPC-X job has eight
+ranks on each of the four nodes, which the explicit `--host` list now
+gives `mpiexec` but which it already got from Slurm. A job sets
+`znver2`, the target its caches were compiled for, as before. Against
+the scripts that jobs 605468, 605553 and 605722 ran, the generated
+scripts differ only in those lines, in code for chains of jobs, which
+these specs do not use, and in the `[after]` command that no longer
+deletes the last saves.
