@@ -1293,6 +1293,60 @@ end
         damaged; types=(Float32x2,))
 end
 
+# The glue of the seven-patch ball of TreeMultiPatch (TreeAMR's M20): a
+# cube of `n³` roots (patch 1) and six shells over its faces `(k, s)`
+# (patches 2–7), of `m` roots along their radial dimension `k`, which runs
+# outward, and `n` along the other two. The cube is glued to each shell's
+# inner face, high to low by the identity or low to low with `k`
+# reversed; the shells to each other by quarter turns. Only the
+# connectivity matters to a checkpoint, so the patches keep the default
+# box of their roots.
+const BALL_SHELLS = ((1, -1), (1, 1), (2, -1), (2, 1), (3, -1), (3, 1))
+ball_index(k, s) = 1 + 2(k - 1) + (s == 1 ? 2 : 1)
+ball_side(s) = s == 1 ? 2 : 1
+function seven_ball_forest(n, m; N=8)
+    glue = []
+    for (k, s) in BALL_SHELLS
+        p = ball_index(k, s)
+        σ = ntuple(e -> e == k ? s * k : e, 3)
+        push!(glue, (from=(1, k, ball_side(s)), to=(p, k, 1), map=σ))
+        push!(glue, (from=(p, k, 1), to=(1, k, ball_side(s)), map=σ))
+        for (l, t) in BALL_SHELLS
+            l == k && continue
+            σ = ntuple(e -> e == k ? l : e == l ? (s == t ? -k : k) : e, 3)
+            push!(glue, (from=(p, l, ball_side(t)), to=(ball_index(l, t), k, ball_side(s)),
+                         map=σ))
+        end
+    end
+    patches = [(roots=(n, n, n),);
+               [(roots=ntuple(j -> j == k ? m : n, 3),) for (k, _) in BALL_SHELLS]]
+    return Forest(patches; N=N, glue=glue)
+end
+
+@testset "The seven-patch ball's appendix round-trips, cube edges and corners included" begin
+    # The failure: an appendix misplaced where it is irregular — at the
+    # cube's edges, where three shells meet, and its corners, where four
+    # patches do, a block owning one, two or three planes, its points
+    # counted once in the plane of the lowest dimension. The state comes
+    # back byte for byte, with as many appendix entries as TreeAMR counts.
+    forest = seven_ball_forest(2, 1)
+    fs = FieldSet(forest, 2; G=3, centering=vertexcentered(3), glue=:interpolate)
+    n = TreeAMR.corelength(fs)
+    @test statelength(fs) - n ==
+          sum(j -> TreeAMR.appendix_entries(fs, j), 1:nleaves(forest))
+    u = rand(MersenneTwister(29), statelength(fs))
+    path = joinpath(mktempdir(), "ball.h5")
+    save_checkpoint(path, forest; fieldsets=("u" => (fs, u),), application="Ball" => 1)
+    @test h5open(f -> length(f[PART * "/fieldsets/u/appendix"]), path) == length(u) - n
+    ck = load_checkpoint(path)
+    back = ck.fieldsets["u"]
+    @test back.fieldset.glue === :interpolate
+    @test bytes(back.state) == bytes(u)
+    v = statevector(back.fieldset)
+    gather!(v, back.fieldset)
+    @test bytes(v) == bytes(u)
+end
+
 @testset "A brick's file is what it was before patches" begin
     # The failure: patches leaking into a brick's file — a feature that
     # makes every earlier reader refuse it, or a dataset it does not know —
