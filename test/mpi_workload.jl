@@ -714,6 +714,70 @@ function patch_cross(tag)
     return nothing
 end
 
+# --- ghosts interpolated across a glue (TreeAMR's M20) ----------------------
+
+# Two patches of `(2, 2)` roots glued to each other at both faces of
+# dimension 1, each wrapped along dimension 2: every face glued, so that a
+# vertex set interpolated across the glue owns its blocks' glued high face
+# planes, its appendix.
+function glue_torus_of(N)
+    pair(from, to) = [(from=from, to=to, map=(1, 2)), (from=to, to=from, map=(1, 2))]
+    glue = [pair((1, 1, 2), (2, 1, 1)); pair((2, 1, 2), (1, 1, 1));
+            [(from=(p, 2, s), to=(p, 2, 3 - s), map=(1, 2)) for p in 1:2 for s in 1:2]]
+    return Forest([(roots=(2, 2), extents=((0.0, 1.0), (0.0, 1.0))) for _ in 1:2]; N=N,
+                  glue=glue, comm=COMM)
+end
+
+# A set's state as two digests, of its cores and of its appendix, each
+# gathered in rank order: a rank's state vector is its cores and then its
+# appendix, so the whole of it gathered would depend on the rank count.
+function glue_states(forest, sets...)
+    return map(sets) do fs
+        u = statevector(fs)
+        gather!(u, fs)
+        n = TreeAMR.corelength(fs)
+        digest(gathered(forest, u[1:n])) * ":" * digest(gathered(forest, u[(n + 1):end]))
+    end
+end
+
+glue_load(path, comm) =
+    (ck = load_checkpoint(path; comm=comm);
+     (ck.forest, ck.fieldsets["v"].fieldset, ck.fieldsets["c"].fieldset))
+
+# A vertex set interpolated across the glue, with an appendix, and a cell
+# set, which has none, saved with one part a node (every other rank
+# streaming its blocks and appendices to the first) and with one part a
+# rank, and loaded at this rank count: both states as saved. Then the
+# files of the runs at other rank counts, loaded at this one.
+function glue_case(tag)
+    forest = glue_torus_of(8)
+    emit(tag, "leaves", nleaves(forest), digest(string(forest.leaves)))
+    vfs = owned_pseudorandom!(FieldSet(forest, 2; G=3, centering=vertexcentered(2),
+                                       glue=:interpolate))
+    cfs = owned_pseudorandom!(FieldSet(forest, 1; G=3, glue=:interpolate))
+    emit(tag, "statelength", sum(TreeAMR.allgather(forest.comm, statelength(vfs))))
+    emit(tag, "saved", glue_states(forest, vfs, cfs)...)
+    dir = checkpoint_dir()
+    for (suffix, io) in (("", :node), ("-all", :all))
+        path = joinpath(dir, "$tag$suffix-n$NRANKS.h5")
+        save_checkpoint(path, forest; fieldsets=("v" => vfs, "c" => cfs),
+                        application="Glue" => 1, io=io)
+        lforest, lv, lc = glue_load(path, COMM)
+        emit(tag * suffix, "loaded", glue_states(lforest, lv, lc)...)
+    end
+    RANK == 0 && touch(joinpath(dir, "$tag-n$NRANKS.done"))
+    glue_cross(tag)
+    return nothing
+end
+
+function glue_cross(tag)
+    for (path, name, n, comm) in other_runs(tag)
+        lforest, lv, lc = glue_load(path, comm)
+        emit("#", name, "at", n, "loaded", glue_states(lforest, lv, lc)...)
+    end
+    return nothing
+end
+
 # --- checkpoints (step 6 of M7) --------------------------------------------
 
 # Where the checkpoints go: `TREEAMR_CHECKPOINT_DIR`, which `mpi_tests.jl`
@@ -1098,6 +1162,9 @@ function main()
     # An element set and a cell set over a forest of patches (TreeAMR's
     # M17), the annulus, saved and loaded at this rank count and the others.
     patch_case("PC")
+    # A set interpolated across a glue, whose appendix is stored beside its
+    # data (TreeAMR's M20).
+    glue_case("GC")
     # Checkpoints: saved and loaded at this rank count, and the files of
     # the runs before this one loaded at it.
     checkpoint_case("C")

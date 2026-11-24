@@ -142,6 +142,11 @@ end
     @test pglue[1] == "4"
     @test words("PC loaded")[3:6] == [pglue; psaved]
     @test words("PC refilled")[3:4] == words("PC filled")[3:4]
+    # A set interpolated across a glue (M20): its cores and its appendix
+    # load as saved, from one part a node and from one part a rank.
+    gsaved = words("GC saved")[3:4]
+    @test words("GC loaded")[3:4] == gsaved
+    @test words("GC-all loaded")[3:4] == gsaved
     # The comparison itself: a changed digest is caught, and so is a sum
     # that moved by more than roundoff — while the same sum to roundoff
     # is not.
@@ -172,6 +177,8 @@ end
         @test length(ec) == 1 && split(only(ec))[(end - 2):end] == ["3"; esaved]
         pc = filter(startswith("# PC-n$from at $at loaded "), hashes)
         @test length(pc) == 1 && split(only(pc))[(end - 3):end] == [pglue; psaved]
+        gc = filter(startswith("# GC-n$from at $at loaded "), hashes)
+        @test length(gc) == 1 && split(only(gc))[(end - 1):end] == gsaved
     end
 
     outs = Dict{Int,String}()
@@ -265,6 +272,7 @@ end
         Base.invokelatest(workload.rotating_cross, "QC")
         Base.invokelatest(workload.element_cross, "EC")
         Base.invokelatest(workload.patch_cross, "PC")
+        Base.invokelatest(workload.glue_cross, "GC")
     end
     hashes = workload_lines(String(take!(io)))
     for from in (2, 3)

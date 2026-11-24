@@ -14,6 +14,7 @@ records are in
 - [The split from TreeAMR](#the-split-from-treeamr)
 - [The Julia floor](#the-julia-floor)
 - [Checkpoint and restart](#checkpoint-and-restart)
+  - [M20: the appendix](#m20-the-appendix)
 - [Checkpoints over MPI](#checkpoints-over-mpi)
   - [Parallel checkpoints](#parallel-checkpoints)
 - [CI](#ci)
@@ -147,6 +148,32 @@ type names, which ties a file to the definitions that wrote it, and
 because it has no MPI.
 
 M9a left open (2026-09-29) the parallel I/O design for M7: one shared file, as the version-1 layout allows, against one file per I/O process plus a wrapper file, to be benchmarked on Symmetry and other HPC systems first. Decided 2026-10-01 with Erik: the shared file, with its throughput on a cluster file system to be measured in M7's step 6. Measured there, 2026-10-02: on BeeGFS the shared file lost data between nodes until ROMIO's read-modify-write was turned off, and did not get faster with nodes; it was replaced by one file per I/O process with an index file, decided that day with Erik. The missing-filter refusal was found on 2026-09-29, measuring M9a.
+
+### M20: the appendix
+
+TreeAMR's M20 (ghosts interpolated across a glue) gives a vertex set over
+a forest of patches an appendix: the glued high face planes its blocks
+own, after the cores in the state vector, a number of points that varies
+from block to block. Erik chose on 2026-11-24 how a checkpoint stores it,
+between two layouts:
+
+- **A dataset of its own** (chosen): `data` stays the cores, and each
+  part gets an `appendix` of its blocks' appendices and an
+  `appendix_crc32c`, one checksum per block. Exactly the owned points;
+  about 200 lines, since the appendix needed a stream of its own, its
+  pieces cut by per-block lengths that both ends derive from the leaves.
+- **Closed blocks**: such a set stored as `(N+1)^D` per block, the
+  planes a block does not own padded. The per-block streaming and
+  checksums would have served unchanged, about 60 lines, and a Python
+  reader would get a regular array. Against it: the padding on most block
+  faces, which a reader must skip and a renderer would show as seams, and
+  the storage, `((N+1)/N)^D − 1` for every block of the set — 42 %, 20 %
+  and 9.7 % in 3D at `N = 8`, 16 and 32 (27 %, 13 % and 6.3 % in 2D) —
+  against about 3.6 % for the appendix itself on TreeMultiPatch's
+  seven-patch ball at `N = 32`. Closed blocks with real values on every
+  plane, which visualization wants for any vertex-centered set, need a
+  ghost fill with the application's hook, and are the visualization
+  sidecar's (M9b) to write.
 
 ## Checkpoints over MPI
 

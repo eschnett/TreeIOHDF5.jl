@@ -1210,6 +1210,89 @@ end
     @test_throws "differ in cell size" load_checkpoint(wider)
 end
 
+# Two patches glued to each other at both faces of dimension 1, each
+# wrapped along dimension 2: every face glued, so that a vertex set
+# interpolated across the glue (TreeAMR's M20) owns the glued high face
+# planes of its blocks there, its appendix, which the state vector holds
+# after the cores.
+function glued_torus(::Type{T}; N=8, n=2) where {T}
+    glue = [glue_both((1, 1, 2), (2, 1, 1), (1, 2)); glue_both((2, 1, 2), (1, 1, 1), (1, 2));
+            [(from=(p, 2, s), to=(p, 2, 3 - s), map=(1, 2)) for p in 1:2 for s in 1:2]]
+    return Forest{T}([(roots=(n, n), extents=((0, 1), (0, 1))) for _ in 1:2]; N=N,
+                     glue=glue)
+end
+
+@testset "A set interpolated across a glue round-trips with its appendix: $T" for
+        T in (Float64, Float32x2)
+    # The failure: a set loaded without its glue mode, which builds and
+    # copies where it interpolated, or without its appendix, whose planes
+    # would come back zero; or an appendix damaged, or hidden behind a
+    # feature a reader does not see, loaded anyway. Every state, the
+    # appendix included, is compared byte for byte; a set that copies, and
+    # an interpolated set without vertex-like dimensions, store no
+    # appendix.
+    forest = glued_torus(T === Float32x2 ? Float64 : T)
+    vfs = FieldSet{T}(forest, 2; G=3, centering=vertexcentered(2), glue=:interpolate)
+    cfs = FieldSet{T}(forest, 1; G=3, glue=:interpolate)
+    wfs = FieldSet{T}(forest, 1; G=2, centering=vertexcentered(2))
+    @test statelength(vfs) > TreeAMR.corelength(vfs)
+    rng = MersenneTwister(23)
+    states = [T.(rand(rng, statelength(fs))) for fs in (vfs, cfs, wfs)]
+    dir = mktempdir()
+    path = joinpath(dir, "glue.h5")
+    save_checkpoint(path, forest;
+                    fieldsets=("v" => (vfs, states[1]), "c" => (cfs, states[2]),
+                               "w" => (wfs, states[3])),
+                    application="Glue" => 1)
+    @test file_features(path) == ["patches", "interpolated_glue"]
+    h5open(path) do file
+        sets = file["TreeAMR.jl/fieldsets"]
+        @test read_attribute(sets["v"], "glue") == "interpolate"
+        @test read_attribute(sets["c"], "glue") == "interpolate"
+        @test !haskey(attributes(sets["w"]), "glue")
+        part = file[PART * "/fieldsets"]
+        nlimbs = T === Float32x2 ? 2 : 1
+        @test length(part["v/appendix"]) ==
+              nlimbs * (statelength(vfs) - TreeAMR.corelength(vfs))
+        @test length(part["v/appendix_crc32c"]) == nleaves(forest)
+        @test !haskey(part["c"], "appendix") && !haskey(part["w"], "appendix")
+    end
+    ck = load_checkpoint(path; types=(Float32x2,))
+    for (name, fs, u) in zip(("v", "c", "w"), (vfs, cfs, wfs), states)
+        back = ck.fieldsets[name]
+        @test back.fieldset.glue === fs.glue
+        @test bytes(back.state) == bytes(u)
+    end
+    # The appendix as the working array holds it after the load: its
+    # planes, which no fill writes, are the saved ones.
+    v = statevector(ck.fieldsets["v"].fieldset)
+    gather!(v, ck.fieldsets["v"].fieldset)
+    @test bytes(v) == bytes(states[1])
+
+    unlisted = edited_copy(path, "unlisted.h5") do file
+        replace_attribute!(file["TreeAMR.jl"], "features", ["patches"])
+    end
+    @test_throws "does not list the feature \"interpolated_glue\"" load_checkpoint(
+        unlisted; types=(Float32x2,))
+    odd = edited_copy(path, "odd.h5") do file
+        replace_attribute!(file["TreeAMR.jl/fieldsets/v"], "glue", "copy")
+    end
+    @test_throws "has the glue mode \"copy\"" load_checkpoint(odd; types=(Float32x2,))
+    missing_ = edited_copy(path, "missing.h5") do file
+        HDF5.delete_object(file[PART * "/fieldsets/v"], "appendix")
+    end
+    @test_throws "holds no appendix of field set \"v\"" load_checkpoint(
+        missing_; types=(Float32x2,))
+    damaged = edited_copy(path, "damaged.h5") do file
+        d = file[PART * "/fieldsets/v/appendix"]
+        x = read(d)
+        x[end] = -x[end] - 1
+        d[ntuple(_ -> Colon(), ndims(x))...] = x
+    end
+    @test_throws "appendix of field set \"v\" does not match the checksums" load_checkpoint(
+        damaged; types=(Float32x2,))
+end
+
 @testset "A brick's file is what it was before patches" begin
     # The failure: patches leaking into a brick's file — a feature that
     # makes every earlier reader refuse it, or a dataset it does not know —
