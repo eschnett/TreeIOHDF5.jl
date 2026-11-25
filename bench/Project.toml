@@ -1,0 +1,26 @@
+# The benchmarks' own environment: this checkout, TreeAMR, HDF5, MPI and the
+# HDF5 filter packages, which are not test dependencies. The SimLaunch specs
+# in `jobs/` run in it; the package's Project.toml and test/Project.toml do
+# not change, so CI does not either.
+[deps]
+H5Zbitshuffle = "51b4e782-877f-4ccf-958a-27bf628210da"
+H5Zlz4 = "eb20ec05-5464-47b5-ba41-098e3c1068a3"
+H5Zzstd = "f6f2d980-1ec6-471c-a70d-0270e22f1103"
+HDF5 = "f67ccb44-e63f-5c2f-98bd-6dc0ccc4ba2f"
+MPI = "da04e1cc-30fd-572f-bb4f-1f8673147195"
+Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
+TreeAMR = "91bc416d-811c-44c1-9bc4-b9c8bbdbbd08"
+TreeIOHDF5 = "49af10b2-b28a-4989-bafa-527ac30d3246"
+
+[sources]
+TreeIOHDF5 = {path = ".."}
+
+[compat]
+H5Zbitshuffle = "0.1"
+H5Zlz4 = "0.1"
+H5Zzstd = "0.1"
+HDF5 = "0.17"
+MPI = "0.20"
+Printf = "1"
+TreeAMR = "0.2"
+julia = "1.13"

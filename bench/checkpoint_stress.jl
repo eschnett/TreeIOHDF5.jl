@@ -6,8 +6,8 @@
 #
 #     srun ... julia --project=<env> bench/checkpoint_stress.jl <mode> <iters> <dir>
 #
-# run by bench/symmetry_checkpoint_stress.sh (MPICH_jll, srun) and
-# bench/symmetry_checkpoint_stress_hpcx.sh (HPC-X's Open MPI, mpiexec).
+# run by the SimLaunch specs `jobs/checkpoint-stress.jl` (MPICH_jll, srun)
+# and `jobs/checkpoint-stress-hpcx.jl` (HPC-X's Open MPI, mpiexec).
 # Every rank owns the rows of its blocks, as `blockrange` splits the
 # benchmark's 12648 leaves (`STRESS_ROOTS`, default 12, at `STRESS_N`
 # cells a block edge, default 4), and writes them into one shared file
@@ -48,20 +48,28 @@
 # `STRESS_SYNC=1` adds `fsync` or `MPI_File_sync` on every rank before
 # the close (in `sieve-*`, MPI's sync-barrier-sync between the two
 # writes; in `treeamr*`, `sync = true`). ROMIO's hints come from the
-# file `ROMIO_HINTS` names, which the job script sets; the `treeamr`
-# modes use no MPI-IO since step 6b, so the hints do not reach them.
+# file `ROMIO_HINTS` names, which the job script sets, or `STRESS_HINTS`
+# names a hint set of `bench/romio_hints/` and this script sets
+# `ROMIO_HINTS` to it before MPI starts (the specs in `jobs/`, whose
+# variables cannot name a file of the project); the `treeamr` modes use
+# no MPI-IO since step 6b, so the hints do not reach them.
 
+let hints = get(ENV, "STRESS_HINTS", "")
+    isempty(hints) || (ENV["ROMIO_HINTS"] = joinpath(@__DIR__, "romio_hints", hints))
+end
 using MPI
 MPI.Init()
 using TreeAMR
-using TreeIOHDF5
 const comm = MPI.COMM_WORLD
 const rank = MPI.Comm_rank(comm)
 const P = MPI.Comm_size(comm)
 mode = ARGS[1]; iters = parse(Int, ARGS[2]); dir = ARGS[3]
-# HDF5 only where a mode needs it, so that the modes below it run under
-# an MPI for which there is no parallel HDF5 at hand (HPC-X's).
+# HDF5, and TreeIOHDF5 with it, only where a mode needs it, so that the
+# modes below it run under an MPI whose HDF5_jll build does not load (HPC-X's
+# `libmpi` loaded directly: HDF5_jll's Open MPI build brings OpenMPI_jll,
+# which fails beside HPC-X's PMIx).
 if startswith(mode, "treeamr") || mode == "hdf5"
+    @eval using TreeIOHDF5
     @eval using HDF5
     @eval using HDF5.Filters: Shuffle, Deflate
     @eval const API = HDF5.API
@@ -324,4 +332,13 @@ end
 total = MPI.Allreduce(nbad, +, comm)
 rank == 0 && println("# done mode $mode sync=$SYNC: $iters iterations, $total bad rows ",
                      "seen by the two readers, ", round(time() - t0; digits=1), " s")
+# The last save goes, its part files with it, as the job scripts removed
+# theirs: a SimLaunch job directory is read-only once the job has ended, so
+# the spec's `[after]` command cannot.
+MPI.Barrier(comm)
+if rank == 0
+    for f in readdir(dir; join=true)
+        startswith(basename(f), "stress-$mode.h5") && rm(f; force=true)
+    end
+end
 MPI.Finalize()

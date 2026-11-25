@@ -1,0 +1,30 @@
+# The checkpoint benchmark at a size that takes seconds: `bench/checkpoint.jl`
+# serially and under MPI on two ranks, on a small mesh, one repetition, with
+# every filter setting. It checks that the benchmark, its environment and the
+# MPI recipe still work together, not the throughput, on the laptop and on
+# any cluster. The study's project is `bench/`, whose Project.toml adds the
+# filter packages, so the snapshot is taken of it:
+#
+#     simlaunch snapshot bench --study <study>
+#     simlaunch prepare <study> --site local --spec jobs/checkpoint-smoke.toml
+#     simlaunch submit <study> jobs/checkpoint-smoke.toml --site local --wait
+#
+# `jobs/checkpoint-mpi.jl` is the measurement.
+name = "checkpoint-smoke"
+time = "0:15:00"
+mode = "sequential"
+vars = { TREEAMR_BENCH_ROOTS = "2", TREEAMR_BENCH_LEVELS = "1", TREEAMR_BENCH_N = "8", TREEAMR_BENCH_REPS = "1", TREEAMR_BENCH_DIR = "." }
+
+[site.local]
+
+[[run]]
+label = "serial"
+cmd = "checkpoint.jl"
+threads = 2
+
+[[run]]
+label = "mpi-2"
+cmd = "checkpoint.jl mpi"
+mpi = "jll"                         # MPICH_jll, as on the clusters; HDF5_jll has its artifact
+ranks = 2
+threads = 2

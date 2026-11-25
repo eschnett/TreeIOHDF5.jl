@@ -17,6 +17,7 @@ records are in
 - [Checkpoints over MPI](#checkpoints-over-mpi)
   - [Parallel checkpoints](#parallel-checkpoints)
 - [CI](#ci)
+- [Cluster jobs](#cluster-jobs)
 
 ## The split from TreeAMR
 
@@ -411,3 +412,115 @@ or `docs/`) and the macOS slots, which the account shares across the
 repositories. Coverage moved from both one-thread cells to the macOS
 one alone, because Linux runners miscompile under coverage and bounds
 checks together (TreeGeneralizedHarmonic's CI.yml has the probes).
+
+## Cluster jobs
+
+On 2026-11-17 Erik asked for the Symmetry job scripts to become specs of
+SimLaunch (`~/src/jl/SimLaunch`), following its `CONVERTING.md`: the
+setup stage (a scratch environment that developed this checkout and
+TreeAMR beside it, `MPIPreferences`, precompilation) became `simlaunch
+prepare`, the `#SBATCH` lines the site profile's, the loops over ranks,
+nodes, meshes and `io` the runs of a spec in Julia, the output files
+each run's own job directory, and the summaries `[after]` commands
+(`bench/stress_summary.sh` for the stress jobs). The ROMIO hint sets,
+which the scripts wrote into the file directory, are files in
+`bench/romio_hints/`. What did not carry over, each said in its spec's
+header:
+
+- **The filter packages.** `checkpoint-mpi.jl` measures the built-in
+  settings only: SimLaunch's environments are the project, its test
+  dependencies and the device or MPI packages, with no kind for H5Zzstd,
+  H5Zlz4 and H5Zbitshuffle. A second project that needs further packages
+  in a job is the reason to ask SimLaunch for a key.
+- **Binding of fewer than eight ranks a node.** The script bound each
+  rank to a block of 64 / ranks cores; SimLaunch binds a rank to one NUMA
+  domain or leaves it unbound, so only the runs with eight ranks a node
+  are bound, each to its domain.
+- **Variables that name a file of the project, and launcher options.**
+  `ROMIO_HINTS`, and in the HPC-X job `--mca io romio321` as the variable
+  `OMPI_MCA_io`, are set by `env` in each run's `prefix`, text passed
+  through as written.
+- **Choices made at submission.** The cases of the stress jobs, the node
+  count, `TREEAMR_MPI=system` and `STRESS_BASEDIR` are edits of the spec
+  (or another recipe of the site's profile), not arguments.
+
+On 2026-11-18 SimLaunch (its commit 6aff4b7) closed two of these, and
+Erik asked for the specs to follow: `placement = "numa"` gives a rank
+the D/R domains from i·D/R on, so every run of `checkpoint-mpi.jl` is
+bound, its rank to the cores the script's `--cpu-bind=cores` gave it;
+and a run's `vars` reach every rank under either launcher, so the
+HPC-X job sets `OMPI_MCA_io` there. The same release writes `prefix`
+and `vars` as they are, without expanding `$PROJECT`, so a run names
+its ROMIO hint set by `STRESS_HINTS` and `bench/checkpoint_stress.jl`
+points `ROMIO_HINTS` at the file before MPI starts.
+
+The filter packages came back the same day, without a key: SimLaunch
+(at 55fc0a2) keeps its environment kinds, and the benchmarks got a
+project of their own, `bench/Project.toml`, which takes this checkout by
+the path `..` and adds MPI, HDF5, TreeAMR and H5Zzstd, H5Zlz4 and
+H5Zbitshuffle. The study is a snapshot of `bench/`: SimLaunch follows
+the path source up, copies the whole checkout and makes `bench/` the
+study's project, so the specs' commands lost their `bench/` and need no
+`env = "test"`; the package's and the test environment's Project.toml
+are unchanged, and so is CI. (The first reading, that without an
+environment kind for it such a project would be ignored, was wrong: the
+snapshot of a subdirectory is the way.) `checkpoint-mpi.jl` measures every filter
+setting again, as the script did, and asks for 6 hours. Checked on the
+laptop only (study `treeio-bench`): `snapshot`, `prepare` and the smoke
+spec, whose two runs measured all seven settings.
+
+Later that day SimLaunch (at d020f5e) moved Symmetry's profile out of
+the package into the user's own, `~/.config/simlaunch/sites/symmetry.toml`,
+unchanged, and added `domains_per_rank`, which binds a rank to a fixed
+number of domains whatever the number of ranks. The specs keep a rank's
+share: `checkpoint-mpi.jl` gives a rank the cores of a node divided by
+its ranks, which one domain a rank could not hold, and the stress jobs
+are not placed. The three generated scripts came out byte for byte as at
+55fc0a2, so job 605468, then two hours into its run, went on.
+
+The scripts stay until a run of each spec has been compared with theirs
+(`PLAN.md`, "Cluster jobs through SimLaunch").
+`bench/symmetry_checkpoint_mpi.sh` was deleted on 2026-11-18, after the
+comparison with job 602671 and the spec's jobs 602743 and 605468.
+
+The stress jobs' comparison the same day (`PLAN.md`, step 3) changed
+two things. The HPC-X spec takes the profile's `mpiabi` recipe, HPC-X
+behind mpi_abi_wrapper, instead of `hpcx`, HPC-X's `libmpi` loaded
+directly: under the latter, HDF5_jll takes its Open MPI build, whose
+OpenMPI_jll does not load beside HPC-X's PMIx, and `checkpoint_stress.jl`
+loaded TreeIOHDF5 in every mode, so neither the spec nor the script could
+run (the script since the package left TreeAMR, where HDF5 was an
+extension that the modes below it never loaded). `checkpoint_stress.jl`
+now loads TreeIOHDF5 with HDF5, only in the modes that save through it,
+and removes its last save itself, since the `[after]` command that was to
+do it runs when the job directory is already read-only.
+
+Behind the wrapper, the ROMIO cases crashed with a smashed stack; without
+it they ran, and showed that HPC-X's ROMIO loses data under data sieving
+as MPICH's did (16 of 200 saves), and nothing with it off, which "The
+hints" above left open for Open MPI; OMPIO lost nothing. The part files
+that replaced the shared file need neither, since no file has two
+writers. The crash was traced to
+the wrapper: HPC-X's ROMIO plugin calls public `MPI_*` functions, and
+behind the wrapper they bind to its ABI library, whose 32-byte status
+overruns the wrapper's 24-byte Open MPI one (`PLAN.md`, step 3).
+mpi_abi_wrapper 1.2.1, released and installed the same day, binds them to
+Open MPI again; behind it the spec ran all seven cases, ROMIO included
+(job 605722). The loss under data sieving did not recur there, nor in
+600 saves each with and without the wrapper on the same nodes (job
+605739): it comes and goes, as it did under MPICH. With that the two
+stress scripts and `bench/simwatch.sh` were deleted the same day, the
+last of the hand-written Symmetry scripts.
+
+On 2026-11-19 SimLaunch (at db87490) named kinds of node in the site
+profiles, spread an `mpiexec` run's ranks evenly over its nodes, and
+stopped passing the caller's `JULIA_CPU_TARGET` to jobs. The specs
+needed no change. They run on Symmetry's default kind, `amd`, in `amdq`
+and without cn112, as before. Every run of the HPC-X job has eight
+ranks on each of the four nodes, which the explicit `--host` list now
+gives `mpiexec` but which it already got from Slurm. A job sets
+`znver2`, the target its caches were compiled for, as before. Against
+the scripts that jobs 605468, 605553 and 605722 ran, the generated
+scripts differ only in those lines, in code for chains of jobs, which
+these specs do not use, and in the `[after]` command that no longer
+deletes the last saves.
