@@ -12,6 +12,7 @@
 - [Release 0.1.7](#release-017)
 - [Release 0.1.8](#release-018)
 - [Cluster jobs through SimLaunch](#cluster-jobs-through-simlaunch)
+- [Release 0.1.10](#release-0110)
 
 ## Release 0.1.0
 
@@ -259,3 +260,15 @@ spec has been compared with theirs, as SimLaunch's `CONVERTING.md` asks.
    per node it agrees with this job's 12³ mesh (0.84 and 4.64 GB/s on two
    nodes, 0.42 against 0.36 a node with `io = :node`), so nothing is
    replaced. Done.
+
+## Release 0.1.10
+
+Compat only, for TreeAMR 0.2.11, which makes the communicator verbs
+`commrank`, `commsize`, `allgather` and `allgatherv` public (TreeGRRMHD's
+AMR-13): `[compat] TreeAMR = "=0.2.8, =0.2.9, =0.2.10, =0.2.11"`. The
+names this package imports keep their meaning, and its `allgatherv`
+calls pass `UInt8` and `UInt64` vectors, which the new `isbits` check
+accepts. 1088 tests pass against the TreeAMR checkout.
+
+1. Tag and register 0.1.10 once TreeAMR 0.2.11 is registered. *Done
+   when* CI is green on GitHub and the package resolves from General.
