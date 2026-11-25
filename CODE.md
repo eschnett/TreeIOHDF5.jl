@@ -46,7 +46,8 @@ TreeIOHDF5 is a companion package of TreeAMR: it provides infrastructure,
 and so it uses TreeAMR's internals — the communicator verbs, the
 cross-rank agreement (`ForestDigest`, `digest_verdict`, `layouthash`),
 the seam (`hasrotating`, `rotating_dims`, `ishalfturn`, `halfturn_dims`), the
-patches (`patch_keywords`), the face kinds
+patches (`patch_keywords`), the appendix of a set interpolated across a
+glue (`hasappendix`, `corelength`, `appendix_entries`), the face kinds
 (`reflecting_faces`, `outflow_faces`), the partition and thread
 helpers, `tohost` and `samebackend`, and the fields of `Forest`,
 `FieldSet` and `MortonKey` — beside its exports. The list, and why it is
@@ -128,8 +129,8 @@ what cannot be recomputed, and nothing else:
 | Forest: `D`, the geometry type, `roots`, `periodic`, `reflecting`, `outflow`, `rotating` or `halfturn`, `extents` (bitwise, in the geometry type), `N`; for a forest of patches, each patch's roots and extents and the glue in place of `roots`, `periodic` and `extents` | saved | the inputs the forest was built from |
 | Forest: the leaf list | saved | the only record of the mesh's history |
 | Forest: `generation` | not saved | a staleness counter, meaningless in another process |
-| Field set: element type, `nvars`, `G`, `centering`, `P`, `walls`, `parity`, `rotation` | saved | its layout |
-| Field set: the **owned** points, in state-vector layout `(N, …, N, nvars, nblocks)` | saved | the authoritative data |
+| Field set: element type, `nvars`, `G`, `centering`, `P`, `walls`, `glue`, `parity`, `rotation` | saved | its layout |
+| Field set: the **owned** points, in state-vector layout `(N, …, N, nvars, nblocks)`, and the appendix of a set interpolated across a glue | saved | the authoritative data |
 | Ghosts, shared vertex planes, the derived wall plane | rebuilt by `scatter!` and `fill_ghosts!` with the application's hook | derived from the owned points |
 | `GhostSchedule`, `InterfaceSchedule`, `Operators`, the parity factors, the rotation tables, a `RotationPair` | rebuilt | derived, or the application's inputs |
 | Regridding | nothing to save | it keeps no state between calls |
@@ -456,6 +457,69 @@ datasets beside the leaf columns:
   feature already says. `connectivity` was a tagged record from the
   start for this ("Multi-block" below).
 
+**Sets interpolated across a glue** (no format bump). A field set built
+with `glue = :interpolate` over a forest of patches (TreeAMR's M20) fills
+its ghosts across a glue by interpolation, and owns every point on a
+glued face on each patch holding it: a block at a glued high face of its
+patch owns that face plane too along every vertex-like dimension. Those
+planes are its **appendix**, which TreeAMR's state vector holds after all
+the cores, block by block, each block's variable by variable, in the
+order TreeAMR's `CODE.md` gives ("Closed ownership and the appendix").
+Such a set writes a `glue` attribute in `fieldsets/<name>/`, the string
+`"interpolate"`, and the file lists `interpolated_glue` in `features`; a
+set with a vertex-like dimension also stores its appendix in each part,
+beside `data`:
+
+    fieldsets/<name>/
+      data               as for any set: the cores, (limbs?, N, …, N,
+                         nvars, nblocks)
+      data_crc32c        as for any set
+      appendix           (limbs?, total): the part's blocks' appendices,
+                         block after block in curve order, as the state
+                         vector holds them
+      appendix_crc32c    UInt32[nblocks]: entry b the CRC-32C of block
+                         b's appendix (0 for a block without one)
+
+and the index's part table an `appendix_crc32c` `UInt32[s, k]` beside
+`data_crc32c`, the CRC-32C of each part's `appendix_crc32c` per set (0
+for a set without an appendix).
+
+- **The cores stay `data`, and the appendix is a dataset of its own**
+  (Erik's choice, 2026-11-24), rather than closed blocks `(N+1)^D` with
+  the planes a block does not own padded: the file holds the owned points
+  only, as for every other set, and nothing a reader has to skip; closed
+  blocks would have reused the per-block streaming unchanged, at about
+  `D/N` more storage for these sets and padding on most block faces
+  ([HISTORY.md](HISTORY.md#m20-the-appendix) has the comparison). Tools
+  that want closed blocks with real values on every plane — any
+  vertex-centered set has the gaps between blocks — are the
+  visualization sidecar's to serve.
+- **No offsets are stored.** A block's appendix length is `nvars` times
+  its number of owned high face points, which follows from its leaf, the
+  glue and the centering (TreeAMR's `appendix_entries`), so every rank
+  derives every block's offsets, and a stored copy could only disagree. A
+  part's `appendix` holds exactly the sum over its blocks, checked on
+  load.
+- **Checked per block, like the data**: each rank checks the appendices
+  it reads against `appendix_crc32c`, and the index vouches for those
+  checksums; a member's appendix arriving at its I/O process is checked
+  against the checksum the member computed before sending it. Over
+  several ranks the appendix travels after the set's data, in pieces of
+  whole blocks of at most `MAX_MESSAGE` bytes cut alike on both ends.
+- **The attribute and the feature go together**, as for the walls: a set
+  with the attribute in a file without the feature, or any value but
+  `"interpolate"`, or a set with an appendix whose part lacks one, is
+  refused as damaged. A file without such a set lists nothing new and
+  stores nothing new, so it is readable by every earlier reader of its
+  version; a reader from before M20 refuses one with it by the feature,
+  rather than rebuild the set as copying and drop its appendix.
+- **Unfiltered, contiguous; filtered, chunks of at most `2^16` entries**,
+  since the appendix is one-dimensional and small beside the data
+  (about `D/N` of it, 3.6 % on TreeMultiPatch's seven-patch ball at
+  `N = 32`).
+- The `glue` joins what the ranks agree on about a field set before a
+  save.
+
 **Element types**.
 
 - **Native types** — `Float16`, `Float32`, `Float64`, the signed and
@@ -510,7 +574,9 @@ with the reason, and defaults are supplied where they are obvious.
   above), TreeAMR's M16 `elements`, listed only by a file holding
   an element-centered set (see "Element sets" above), and TreeAMR's M17
   `patches`, listed by a file whose forest is made of patches in place
-  of `brick` (see "Forests of patches" above).
+  of `brick` (see "Forests of patches" above), and TreeAMR's M20
+  `interpolated_glue`, listed only by a file holding a set interpolated
+  across a glue (see "Sets interpolated across a glue" above).
 - **Refusals are `ArgumentError`s that say why.** They name the TreeAMR
   version that wrote the file, from `provenance`, and point to
   `checkpoint_environment(path, dir)`. That writes the stored
