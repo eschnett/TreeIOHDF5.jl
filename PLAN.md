@@ -13,6 +13,7 @@
 - [Release 0.1.8](#release-018)
 - [Cluster jobs through SimLaunch](#cluster-jobs-through-simlaunch)
 - [Release 0.1.10](#release-0110)
+- [Release 0.1.11](#release-0111)
 
 ## Release 0.1.0
 
@@ -272,3 +273,14 @@ accepts. 1088 tests pass against the TreeAMR checkout.
 
 1. Tag and register 0.1.10 once TreeAMR 0.2.11 is registered. *Done
    when* CI is green on GitHub and the package resolves from General.
+
+## Release 0.1.11
+
+The appendix of a set interpolated across a glue (TreeAMR's M20), for
+TreeAMR 0.2.12: `[compat] TreeAMR = "=0.2.12"` alone, since this package
+now imports `hasappendix`, `corelength` and `appendix_entries`, which
+0.2.12 added. A checkpoint of such a set stores the appendix in a dataset
+of its own beside the cores ("M20: the appendix" in `HISTORY.md`).
+
+1. Tag and register 0.1.11. *Done when* CI is green on GitHub and the
+   package resolves from General.
