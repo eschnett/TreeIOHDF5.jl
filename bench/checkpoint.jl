@@ -15,12 +15,9 @@
 # (`--project=test`). The filter packages H5Zzstd, H5Zlz4 and H5Zbitshuffle
 # are used where they can be loaded — from the active
 # environment, or from the default one Julia stacks under it — and
-# skipped otherwise. They are not test dependencies, so the numbers with
-# them come from a scratch environment that develops this checkout and
-# adds them:
-#
-#     julia --project=<scratch> -e 'using Pkg; Pkg.develop(path="<this checkout>");
-#         Pkg.add(["HDF5", "H5Zzstd", "H5Zlz4", "H5Zbitshuffle"])'
+# skipped otherwise. They are not test dependencies; the benchmarks' own
+# environment, `bench/Project.toml`, has them, with MPI and this checkout
+# by path (`--project=bench`).
 #
 # The two states are the two kinds of data the downstream applications
 # checkpoint. The mesh is refined twice around the sphere `r = 1/2` in
@@ -75,7 +72,7 @@
 # the number of parts. The file size is the index's and the parts'
 # together. `TREEAMR_BENCH_DIR` is then a directory every rank sees — on
 # a cluster, the parallel file system under test
-# (`bench/symmetry_checkpoint_mpi.sh`).
+# (`jobs/checkpoint-mpi.jl`).
 #
 #     TREEAMR_BENCH_D       dimension (default 3)
 #     TREEAMR_BENCH_N       cells per block edge (default 16)

@@ -33,7 +33,10 @@ files and index of "Checkpoints without parallel I/O", the data moved by
 TreeAMR's communicator verbs. MPI is never called here: an `MPI.Comm`
 reaches TreeAMR's MPI extension through `communicator`, and every
 message goes through TreeAMR's verbs. `bench/` holds the throughput
-benchmark and the Symmetry jobs, `test/` the suite. The package
+benchmark and the stress reproducers, in an environment of their own
+(`bench/Project.toml`, which adds MPI and the HDF5 filter packages to
+this checkout), `jobs/` the SimLaunch specs that run them on Symmetry,
+`test/` the suite. The package
 supports Julia 1.13 and later, as TreeAMR does, and CI tests 1.13 only
 ([HISTORY.md](HISTORY.md#the-julia-floor) has why).
 
