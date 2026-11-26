@@ -1,6 +1,5 @@
 # Copied verbatim from TreeAMR's `test/oracles.jl` (a shared test helper); the
 # `CODE.md` it cites is TreeAMR's.
-
 # Independent, deliberately naive reference implementations. The point
 # is that they share no logic with the package: the property tests
 # compare the real (fast, bit-twiddling) implementations against

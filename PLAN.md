@@ -14,6 +14,7 @@
 - [Cluster jobs through SimLaunch](#cluster-jobs-through-simlaunch)
 - [Release 0.1.10](#release-0110)
 - [Release 0.1.11](#release-0111)
+- [Release for TreeAMR 0.3](#release-for-treeamr-03)
 
 ## Release 0.1.0
 
@@ -284,3 +285,18 @@ of its own beside the cores ("M20: the appendix" in `HISTORY.md`).
 
 1. Tag and register 0.1.11. *Done when* CI is green on GitHub and the
    package resolves from General.
+
+## Release for TreeAMR 0.3
+
+Closed blocks (TreeAMR's M22): a set with a vertex-like dimension stores
+its closed blocks under the feature `closed_blocks`, the appendix and the
+`walls` attribute are gone, and a file of the half-open layout with a
+vertex-like set is refused ("Closed blocks" in `CODE.md`). `[compat]
+TreeAMR = "=0.3.0"`; the `[sources]` path entries to the TreeAMR
+checkout beside this one go once 0.3.0 is registered.
+
+1. **(open)** Erik's answers on the half-open files — whether they are
+   converted, filled on load or stay refused — and the release's version
+   number. *Done when* `CODE.md` says what such a file becomes.
+2. Tag and register once TreeAMR 0.3.0 is registered. *Done when* CI is
+   green on GitHub and the package resolves from General.

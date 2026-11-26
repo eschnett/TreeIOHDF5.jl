@@ -58,10 +58,10 @@ const READ_VERSIONS = (1, 2)
 # loading the seam as two outer faces, and still reads every other one.
 # `outflow` is listed only by a file whose forest has an outflow face,
 # for the same reason: a reader without it would load those faces as
-# outer ones, and fill their ghosts from the hook. `symmetric_walls` is
-# listed only by a file holding a field set with `walls = :symmetric`
-# (TreeAMR's AMR-8): a reader without it would rebuild that set with
-# half-open walls, whose fill leaves the low wall planes as they are.
+# outer ones, and fill their ghosts from the hook. `symmetric_walls` was
+# listed by a file holding a field set with `walls = :symmetric`
+# (TreeAMR's AMR-8), which closed blocks (TreeAMR's M22) removed; such a
+# file is of the half-open layout, and refused (`read_layout`).
 # `halfturn` (TreeAMR's M14) is listed only by a file whose forest has a
 # half-turn seam, for the same reason as `rotating`: a reader without it
 # would load the seam as an outer face, and the field sets without their
@@ -76,9 +76,18 @@ const READ_VERSIONS = (1, 2)
 # lose the glue and load every glued face as an outer one. A connectivity
 # is the first thing a reader must understand, so it is a feature, as
 # `brick` always was; the format version stays, since a brick's file is
-# what it was (CODE.md, "Forests of patches").
+# what it was (CODE.md, "Forests of patches"). `interpolated_glue` is
+# listed by a file holding a set interpolated across a glue (TreeAMR's
+# M20); under half-open ownership such a vertex-like set carried an
+# appendix, which closed blocks removed. `closed_blocks` (TreeAMR's M22)
+# is listed by a file holding a set with a vertex-like dimension, whose
+# blocks are stored closed, `N + 1` points along it: a reader without it
+# would take each block's data for `N` points a dimension, and a file of
+# such a set without it is of the half-open layout, which this reader
+# refuses (`read_layout`). A file of cell and element sets only is what
+# it was, and lists neither.
 const FEATURES = ("brick", "rotating", "outflow", "symmetric_walls", "halfturn",
-                  "elements", "patches", "interpolated_glue")
+                  "elements", "patches", "interpolated_glue", "closed_blocks")
 
 hasoutflow(forest::Forest) = any(f -> any(f), outflow_faces(forest))
 
@@ -91,10 +100,10 @@ features_of(forest::Forest, sets) =
     [haspatches(forest) ? "patches" : "brick";
      hasrotating(forest) ? [ishalfturn(forest) ? "halfturn" : "rotating"] : String[];
      hasoutflow(forest) ? ["outflow"] : String[];
-     any(((_, fs, _),) -> fs.walls === :symmetric, sets) ? ["symmetric_walls"] : String[];
      any(((_, fs, _),) -> fs.P > 0, sets) ? ["elements"] : String[];
      any(((_, fs, _),) -> fs.glue === :interpolate, sets) ? ["interpolated_glue"] :
-     String[]]
+     String[];
+     any(((_, fs, _),) -> any(==(1), staggers(fs)), sets) ? ["closed_blocks"] : String[]]
 
 # --- element types -------------------------------------------------------
 
@@ -979,10 +988,8 @@ function write_layout(parent, name, fs::FieldSet{T,D}) where {T,D}
         fs.rotation === nothing || write_attribute(g, "rotation", Int64[fs.rotation...])
         # And of a half-turn seam (TreeAMR's M14).
         fs.halfturn === nothing || write_attribute(g, "halfturn", Int64[fs.halfturn...])
-        # Symmetric walls (AMR-8), where the set has them.
-        fs.walls === :half_open || write_attribute(g, "walls", string(fs.walls))
         # Ghosts interpolated across a glue (TreeAMR's M20), where the set
-        # has them; such a set's appendix is stored beside its data.
+        # has them.
         fs.glue === :copy || write_attribute(g, "glue", string(fs.glue))
         write_attribute(g, "range", "owned")
     finally
@@ -1032,18 +1039,20 @@ function read_layout(g, name, ::Val{D}, types, context, features) where {D}
                 "variable indices, one per variable: the file is damaged. " * note))
         halfturn = Int.(halfturn)
     end
-    # Half-open walls unless the set says otherwise. As for the forest's
-    # attributes, the attribute and the feature go together.
-    walls = :half_open
-    if hasattr(g, "walls")
-        walls = Symbol(read_attribute(g, "walls"))
-        walls === :symmetric || throw(ArgumentError(
-            "$what has the walls $(repr(string(walls))), and only \"symmetric\" is " *
-            "stored (half-open walls store nothing): the file is damaged. " * note))
-        "symmetric_walls" in features || throw(ArgumentError(
-            "$what has symmetric walls, but the file does not list the feature " *
-            "\"symmetric_walls\" that a file with them lists: the file is damaged. " *
-            note))
+    # A set with a vertex-like dimension is stored closed (TreeAMR's M22),
+    # which the file says by the feature `closed_blocks`; without it the
+    # file is of the half-open layout, whose blocks hold `N` points along
+    # such a dimension and whose high face planes were no block's.
+    # Refused, saying so, until it is decided what such a file becomes.
+    vertexlike = any(c -> c === :vertex, centering)
+    if hasattr(g, "walls") || (vertexlike && !("closed_blocks" in features))
+        throw(ArgumentError(
+            "$what has a vertex-like dimension (centering $centering) and was written " *
+            "with half-open ownership, before TreeAMR 0.3$(hasattr(g, "walls") ?
+                " (with symmetric walls)" : ""): its blocks hold N points along such a " *
+            "dimension, where TreeAMR 0.3 holds N + 1, both face planes of a block. " *
+            "This version does not read such a file. Load it with the TreeIOHDF5 and " *
+            "TreeAMR it was written with. " * note))
     end
     # The order of an element set (M16), `nothing` for any other, which is
     # what the constructor takes for "none". The attribute, the centering
@@ -1066,7 +1075,7 @@ function read_layout(g, name, ::Val{D}, types, context, features) where {D}
             "element-centered set stores: the file is damaged. " * note))
     end
     # Copied across a glue unless the set says otherwise (TreeAMR's M20);
-    # the attribute and the feature go together, as for the walls.
+    # the attribute and the feature go together.
     glue = :copy
     if hasattr(g, "glue")
         glue = Symbol(read_attribute(g, "glue"))
@@ -1078,15 +1087,18 @@ function read_layout(g, name, ::Val{D}, types, context, features) where {D}
             "\"interpolated_glue\" that a file with such a set lists: the file is " *
             "damaged. " * note))
     end
-    return (; name=String(name), T, F, limbs, nvars, G, centering, P, walls, glue, parity,
+    return (; name=String(name), T, F, limbs, nvars, G, centering, P, glue, parity,
             rotation, halfturn)
 end
 
 # How a field set's blocks are stored: the dimensions of one block in the
 # file, limbs first, and the number of elements of `T` a block holds in
-# the state vector, which is a block's run of the data's last axis.
-block_dims(N, ::Val{D}, limbs) where {D} = (limbs..., ntuple(_ -> N, D)...)
-block_length(N, D, nvars) = N^D * nvars
+# the state vector, which is a block's run of the data's last axis. A
+# block holds its closed box (TreeAMR's M22): `N + c_d` points along
+# dimension `d`, `c_d` 1 along a vertex-like dimension and 0 along a
+# cell-like one (`staggers`).
+block_dims(N, c::NTuple{D,Int}, limbs) where {D} = (limbs..., (N .+ c)...)
+block_length(N, c::Tuple, nvars) = prod(N .+ c) * nvars
 
 # Validate the `fieldsets` keyword of `save_checkpoint` into a list of
 # `(name, fs, u)`, `u` being `nothing` for the bare form, before a file
@@ -1210,37 +1222,6 @@ end
 # hold `per` elements each.
 elements(rows::UnitRange{Int}, per) = ((first(rows) - 1) * per + 1):(last(rows) * per)
 
-# The appendix of a set interpolated across a glue (TreeAMR's M20): the
-# entries of each of the blocks `blocks` (global leaves) in the state
-# vector, which TreeAMR's `appendix_entries` gives on any rank, so that
-# both ends of a message and the reader of a part agree on them without
-# sending them.
-appendix_lengths(fs, blocks) = Int[appendix_entries(fs, j) for j in blocks]
-
-# The appendix's blocks, given their lengths, cut into pieces of whole
-# blocks of at most `MAX_MESSAGE` bytes each, or of one block where a
-# block is larger, as `pieces` cuts the data; a piece with no entries is
-# not sent. Returned as ranges of indices into `lens`.
-function appendix_pieces(lens::AbstractVector{Int}, elbytes::Integer)
-    cap = MAX_MESSAGE[] ÷ max(1, Int(elbytes))
-    out = UnitRange{Int}[]
-    i, n = 1, length(lens)
-    while i <= n
-        j, total = i, lens[i]
-        while j < n && total + lens[j + 1] <= cap
-            j += 1
-            total += lens[j]
-        end
-        total > 0 && push!(out, i:j)
-        i = j + 1
-    end
-    return out
-end
-
-# The entries of the pieces' blocks `rows` (indices into `lens`), given the
-# offsets `offs = cumsum([0; lens])`.
-appendix_elements(offs, rows::UnitRange{Int}) = (offs[first(rows)] + 1):offs[last(rows) + 1]
-
 # The part file of group `j`: beside the index, named after it and the
 # save, so that a part from another save cannot be taken for one of this
 # save's. The link to it in the index is named with four digits at least,
@@ -1297,14 +1278,9 @@ function prepared((name, fs, u))
         gather!(u, fs)
     end
     host = tohost(u)
-    per = block_length(fs.forest.N, dimension(fs.forest), fs.nvars)
+    per = block_length(fs.forest.N, staggers(fs), fs.nvars)
     sums = block_checksums(host, nblocks(fs), per)
-    hasappendix(fs) || return host, per, sums, nothing
-    # The appendix follows the cores, block by block (TreeAMR's M20).
-    lens = appendix_lengths(fs, blockrange(fs.forest))
-    offs = corelength(fs) .+ cumsum([0; lens])
-    appsums = UInt32[crc_of(host, offs[b] + 1, lens[b]) for b in eachindex(lens)]
-    return host, per, sums, (; lens, offs, sums=appsums)
+    return host, per, sums
 end
 
 dimension(::Forest{D}) where {D} = D
@@ -1319,31 +1295,15 @@ function send_blocks(r::Ranks, plan::IOPlan, sets)
     for set in sets
         prep = nothing
         err = attempt(() -> (prep = prepared(set)), err)
-        withappendix = hasappendix(set[2])
         if prep === nothing
-            status = UInt32[1]
-            waitall(r.comm, [isend(r.comm, status, io, TAG_HEAD)])
-            # The appendix's head too, so that the I/O process, which
-            # expects one, does not wait for it.
-            withappendix && waitall(r.comm, [isend(r.comm, status, io, TAG_HEAD)])
+            waitall(r.comm, [isend(r.comm, UInt32[1], io, TAG_HEAD)])
             continue
         end
-        host, per, sums, app = prep
+        host, per, sums = prep
         head = [UInt32(0); sums]
         requests = Any[isend(r.comm, head, io, TAG_HEAD)]
         for piece in pieces(1:length(sums), per * sizeof(eltype(host)))
             push!(requests, isend(r.comm, view(host, elements(piece, per)), io, TAG_SAVE))
-        end
-        # Then the appendix (TreeAMR's M20): its head, with a checksum per
-        # block, and its pieces, after the data, in the order the I/O
-        # process receives them.
-        if app !== nothing
-            apphead = [UInt32(0); app.sums]
-            push!(requests, isend(r.comm, apphead, io, TAG_HEAD))
-            for piece in appendix_pieces(app.lens, sizeof(eltype(host)))
-                push!(requests, isend(r.comm, view(host, appendix_elements(app.offs, piece)),
-                                      io, TAG_SAVE))
-            end
         end
         waitall(r.comm, requests)
     end
@@ -1366,14 +1326,13 @@ function write_blocks!(pg, err, r::Ranks, plan::IOPlan, forest, sets, filters)
     fg = nothing
     err = attempt(() -> (fg = create_group(pg, "fieldsets"; track_order=true)), err)
     summaries = UInt32[]
-    appsummaries = UInt32[]
     for (s, set) in enumerate(sets)
         name, fs, _ = set
         T = eltype(fs.work)
         F, limbs = storage_of(T, "field set $(repr(name))")
-        block = block_dims(forest.N, Val(D), limbs)
+        block = block_dims(forest.N, staggers(fs), limbs)
         dims = (block..., fs.nvars, nb)
-        per = block_length(forest.N, D, fs.nvars)
+        per = block_length(forest.N, staggers(fs), fs.nvars)
         sums = zeros(UInt32, nb)
         g = dset = nothing
         err = attempt(err) do
@@ -1419,7 +1378,7 @@ function write_blocks!(pg, err, r::Ranks, plan::IOPlan, forest, sets, filters)
                         queue[j][1], TAG_SAVE)
         request = isempty(queue) ? nothing : post(1)
         if prep !== nothing
-            host, _, mine, _ = prep
+            host, _, mine = prep
             sums[1:own] = mine
             err = attempt(err) do
                 GC.@preserve host block_slab(API.h5d_write, dset, F, dims, 1:own,
@@ -1455,104 +1414,10 @@ function write_blocks!(pg, err, r::Ranks, plan::IOPlan, forest, sets, filters)
         err = attempt(() -> write_array(g, "data_crc32c", UInt32, (nb,), sums), err)
         push!(summaries, crc_of(sums))
         dset === nothing || close(dset)
-        err, appsummary = hasappendix(fs) ?
-                          write_appendix!(g, err, r, plan, forest, set, prep, filters) :
-                          (err, UInt32(0))
-        push!(appsummaries, appsummary)
         g === nothing || close(g)
     end
     fg === nothing || close(fg)
-    return err, [summaries; appsummaries]
-end
-
-# The I/O process's part of a save for one field set's appendix (TreeAMR's
-# M20), after its data: the dataset `appendix` of the group's blocks'
-# appendices in state-vector order, its own first, then each member's as
-# it arrives, every block checked against the checksum its member sent
-# first, and `appendix_crc32c`, one CRC-32C per block. As for the data,
-# after a failure it goes on receiving, without writing. Returns the first
-# error and the CRC-32C of `appendix_crc32c`.
-function write_appendix!(g, err, r::Ranks, plan::IOPlan, forest, (name, fs, _), prep,
-                         filters)
-    n, P = nleaves(forest), r.size
-    T = eltype(fs.work)
-    F, limbs = storage_of(T, "field set $(repr(name))")
-    blocks = groupblocks(n, P, plan.k, plan.group)
-    lens = appendix_lengths(fs, blocks)
-    offs = cumsum([0; lens])
-    nb, total = length(blocks), offs[end]
-    dims = (limbs..., total)
-    sums = zeros(UInt32, nb)
-    dset = nothing
-    err = attempt(err) do
-        # One chunk per 2^16 entries at most when filtered; an empty
-        # dataset is stored contiguously, as an empty part's data are.
-        dset = write_array(g, "appendix", F, dims, nothing;
-                           chunk=(limbs..., clamp(total, 1, 2^16)),
-                           filters=total == 0 ? () : filters, keep=true)
-    end
-    own = length(rankblocks(n, P, r.rank))
-    if prep !== nothing
-        host, _, _, app = prep
-        sums[1:own] = app.sums
-        rows = 1:offs[own + 1]
-        err = attempt(err) do
-            GC.@preserve host block_slab(API.h5d_write, dset, F, dims, rows,
-                                         pointer(host, app.offs[1] + 1))
-        end
-    end
-    members = plan.ranks[2:end]
-    counts = [length(rankblocks(n, P, q)) for q in members]
-    heads = [Vector{UInt32}(undef, 1 + m) for m in counts]
-    waitall(r.comm, [irecv(r.comm, heads[i], q, TAG_HEAD) for (i, q) in enumerate(members)])
-    queue = Tuple{Int,UnitRange{Int},Int}[]          # (rank, piece of the group's blocks, member)
-    start = own
-    for (i, q) in enumerate(members)
-        m = counts[i]
-        if heads[i][1] != 0
-            err === nothing && (err = ErrorException(
-                "rank $q could not prepare the appendix of field set $(repr(name)) for " *
-                "its I/O process, rank $(r.rank); rank $q's own error says why"))
-        else
-            sums[start .+ (1:m)] = view(heads[i], 2:(m + 1))
-            for piece in appendix_pieces(view(lens, start .+ (1:m)), sizeof(T))
-                push!(queue, (q, start .+ piece, i))
-            end
-        end
-        start += m
-    end
-    longest = maximum(e -> offs[last(e[2]) + 1] - offs[first(e[2])], queue; init=0)
-    buffers = (Vector{T}(undef, longest), Vector{T}(undef, longest))
-    length_of(j) = offs[last(queue[j][2]) + 1] - offs[first(queue[j][2])]
-    post(j) = irecv(r.comm, view(buffers[mod1(j, 2)], 1:length_of(j)), queue[j][1],
-                    TAG_SAVE)
-    request = isempty(queue) ? nothing : post(1)
-    for (j, (q, piece, i)) in enumerate(queue)
-        waitall(r.comm, [request])
-        j < length(queue) && (request = post(j + 1))
-        err === nothing || continue
-        buf = buffers[mod1(j, 2)]
-        at = 0
-        for b in piece
-            if crc_of(buf, at + 1, lens[b]) != sums[b]
-                err = ErrorException(
-                    "the appendix of block $(blocks[b]) of field set $(repr(name)) " *
-                    "arrived at its I/O process, rank $(r.rank), from rank $q damaged: " *
-                    "its CRC-32C does not match the one rank $q computed before sending " *
-                    "it, so it was not written, and the checkpoint is not saved")
-                break
-            end
-            at += lens[b]
-        end
-        err === nothing || continue
-        err = attempt(err) do
-            GC.@preserve buf block_slab(API.h5d_write, dset, F, dims,
-                                        appendix_elements(offs, piece), pointer(buf))
-        end
-    end
-    err = attempt(() -> write_array(g, "appendix_crc32c", UInt32, (nb,), sums), err)
-    dset === nothing || close(dset)
-    return err, crc_of(sums)
+    return err, summaries
 end
 
 # The attributes that make a group a part (M7 step 6b): which save it
@@ -1609,7 +1474,7 @@ end
 # shapes the objects created for it.
 set_layout((name, fs, u)) =
     (name, typename(eltype(fs.work)), fs.nvars, fs.G, string.(fs.centering), fs.P,
-     string(fs.walls), string(fs.glue),
+     string(fs.glue),
      fs.parity === nothing ? "" : string(map(p -> map(parity_name, p), fs.parity)),
      fs.rotation === nothing ? "" : string(fs.rotation),
      fs.halfturn === nothing ? "" : string(fs.halfturn), u === nothing)
@@ -1683,7 +1548,7 @@ function write_checkpoint(f, r::Ranks, path, forest, appname, appversion, sets, 
             err = send_blocks(r, plan, sets)
         end
         agree_errors(r, err, "save_checkpoint, writing the parts,")
-        reports = reshape(allgatherv(r.comm, report), 2 + 2length(sets), plan.k)
+        reports = reshape(allgatherv(r.comm, report), 2 + length(sets), plan.k)
 
         # 2. The index, on rank 0; the do-block on every rank.
         err = nothing
@@ -1767,8 +1632,7 @@ saving_ranks(obj) = lock(() -> get(SAVING, HDF5.file(obj), nothing), SAVING_LOCK
 # Everything of the index but the application's group: the format
 # attributes, the provenance, the forest, the field sets' layouts, the
 # part table and the links to the parts. `reports` holds a column per
-# part, `(part, bytes, data checksum per field set..., appendix checksum
-# per field set...)`, in part order.
+# part, `(part, bytes, data checksum per field set...)`, in part order.
 function write_index!(file, path, saveid, forest, sets, appname, reports, k, nranks)
     root = haskey(file, GROUP) ? file[GROUP] : create_group(file, GROUP)
     try
@@ -1800,11 +1664,6 @@ function write_index!(file, path, saveid, forest, sets, appname, reports, k, nra
             s = length(sets)
             write_array(table, "data_crc32c", UInt32, (s, k),
                         UInt32.(reports[3:(2 + s), :]))
-            # The CRC-32C of each part's `appendix_crc32c`, per set, where a
-            # set has an appendix (TreeAMR's M20; 0 for any other set).
-            any(((_, fs, _),) -> hasappendix(fs), sets) &&
-                write_array(table, "appendix_crc32c", UInt32, (s, k),
-                            UInt32.(reports[(3 + s):end, :]))
         finally
             close(table)
         end
@@ -2078,14 +1937,13 @@ struct PartEntry
     blocks::UnitRange{Int}
     bytes::Int
     sums::Union{Nothing,Vector{UInt32}}
-    appsums::Union{Nothing,Vector{UInt32}}       # of `appendix_crc32c` (M20)
 end
 
 # The part table of the index `root`, for the field sets `names`, checked:
 # the parts tile the blocks in order, and every file name is a plain one.
 # A version-1 file is one inline part.
 function read_parttable(root, version, n, names, context)
-    version == 1 && return [PartEntry("", 1:n, 0, nothing, nothing)]
+    version == 1 && return [PartEntry("", 1:n, 0, nothing)]
     note = writer_note(context)
     bad(what) = throw(ArgumentError(
         "the part table of $(repr(context.path)) is damaged: $what. " * note))
@@ -2125,14 +1983,8 @@ function read_parttable(root, version, n, names, context)
         i === nothing && bad("it has no checksums for field set $(repr(name))")
         return i
     end
-    # The appendices' checksums, which a file with a set that has one holds.
-    appsums = haskey(t, "appendix_crc32c") ?
-              read_array(t["appendix_crc32c"], UInt32, (s, k),
-                         "the parts' checksums of the appendices", note) : nothing
     return [PartEntry(files[p], firsts[p]:lasts[p], bytes[p],
-                      UInt32[sums[i, p] for i in columns],
-                      appsums === nothing ? nothing :
-                      UInt32[appsums[i, p] for i in columns]) for p in 1:k]
+                      UInt32[sums[i, p] for i in columns]) for p in 1:k]
 end
 
 # The rank that reads each part: the owner of its first block under the
@@ -2166,12 +2018,10 @@ struct OpenPart
     file::Union{Nothing,HDF5.File}
     datasets::Vector{HDF5.Dataset}
     sums::Vector{Union{Nothing,Vector{UInt32}}}
-    appendices::Vector{Union{Nothing,HDF5.Dataset}}     # (M20) for a set with one
-    appsums::Vector{Union{Nothing,Vector{UInt32}}}
 end
 
-function open_part(entry::PartEntry, j, version, real, dir, saveid, layouts, fieldsets,
-                   forest, context)
+function open_part(entry::PartEntry, j, version, real, dir, saveid, layouts, forest,
+                   context)
     note = writer_note(context)
     what = entry.file == "" ? "the part inside $(repr(context.path))" :
            "part $j of $(repr(context.path)), $(repr(entry.file)),"
@@ -2209,19 +2059,17 @@ function open_part(entry::PartEntry, j, version, real, dir, saveid, layouts, fie
                        "$(attr("last_block")), where the index names part $j, of blocks " *
                        "$(first(entry.blocks)) to $(last(entry.blocks))")
         end
-        D = dimension(forest)
         nb = length(entry.blocks)
         datasets = HDF5.Dataset[]
         sums = Union{Nothing,Vector{UInt32}}[]
-        appendices = Union{Nothing,HDF5.Dataset}[]
-        appsums = Union{Nothing,Vector{UInt32}}[]
         for (s, layout) in enumerate(layouts)
             key = "fieldsets/$(layout.name)"
             haskey(g, key * "/data") || refuse("holds no data of field set " *
                                                repr(layout.name))
             dset = g[key * "/data"]
             push!(datasets, dset)
-            dims = (block_dims(forest.N, Val(D), layout.limbs)..., layout.nvars, nb)
+            dims = (block_dims(forest.N, staggers(layout.centering), layout.limbs)...,
+                    layout.nvars, nb)
             check_dataset(dset, layout.F, dims, "the data of field set " *
                           "$(repr(layout.name)) in $what", note)
             if haskey(g, key * "/data_crc32c")
@@ -2237,33 +2085,8 @@ function open_part(entry::PartEntry, j, version, real, dir, saveid, layouts, fie
                                        repr(layout.name))
                 push!(sums, nothing)
             end
-            # The appendix of a set interpolated across a glue (TreeAMR's
-            # M20), its length a function of the part's blocks, and its
-            # checksums vouched for by the index.
-            fs = fieldsets[s]
-            if !hasappendix(fs)
-                push!(appendices, nothing)
-                push!(appsums, nothing)
-                continue
-            end
-            (haskey(g, key * "/appendix") && haskey(g, key * "/appendix_crc32c")) ||
-                refuse("holds no appendix of field set $(repr(layout.name)), which a set " *
-                       "interpolated across a glue has")
-            app = g[key * "/appendix"]
-            push!(appendices, app)
-            total = sum(appendix_lengths(fs, entry.blocks); init=0)
-            check_dataset(app, layout.F, (layout.limbs..., total),
-                          "the appendix of field set $(repr(layout.name)) in $what", note)
-            stored = read_array(g[key * "/appendix_crc32c"], UInt32, (nb,),
-                                "the appendix checksums of field set " *
-                                repr(layout.name), note)
-            (entry.appsums !== nothing && crc_of(stored) == entry.appsums[s]) ||
-                refuse("holds checksums of the appendix of field set " *
-                       "$(repr(layout.name)) that do not match the index's checksum of " *
-                       "them: it was damaged, or is from another save")
-            push!(appsums, stored)
         end
-        return OpenPart(file, datasets, sums, appendices, appsums)
+        return OpenPart(file, datasets, sums)
     catch
         file === nothing || close(file)
         rethrow()
@@ -2286,7 +2109,7 @@ function load_from(f, meta, real, r::Ranks, path, types, backend, fieldsets)
     # is what decides their NUMA domain; the reads below only fill them.
     sets = map(layouts) do l
         fs = FieldSet{l.T}(forest, l.nvars; G=l.G, centering=l.centering, P=l.P,
-                           walls=l.walls, glue=l.glue, parity=l.parity,
+                           glue=l.glue, parity=l.parity,
                            rotation=l.rotation, halfturn=l.halfturn, backend=backend)
         return (; fieldset=fs, state=statevector(fs))
     end
@@ -2300,17 +2123,14 @@ function load_from(f, meta, real, r::Ranks, path, types, backend, fieldsets)
         for p in mine
             err = attempt(err) do
                 opened[p] = open_part(table[p], p - 1, version, real,
-                                      dirname(abspath(path)), saveid, layouts,
-                                      [set.fieldset for set in sets], forest, context)
+                                      dirname(abspath(path)), saveid, layouts, forest,
+                                      context)
             end
         end
         agree_errors(r, err, "load_checkpoint, opening the parts,")
         for (s, layout) in enumerate(layouts)
             read_blocks!(sets[s].state, r, s, layout, table, readers, opened, forest,
                          context)
-            hasappendix(sets[s].fieldset) &&
-                read_appendix!(sets[s].state, r, s, sets[s].fieldset, layout, table,
-                               readers, opened, forest, context)
         end
     finally
         for part in values(opened)
@@ -2342,8 +2162,8 @@ end
 function read_blocks!(u, r::Ranks, s, layout, table, readers, opened, forest, context)
     n, P = nleaves(forest), r.size
     T, F = layout.T, layout.F
-    D = dimension(forest)
-    per = block_length(forest.N, D, layout.nvars)
+    c = staggers(layout.centering)
+    per = block_length(forest.N, c, layout.nvars)
     bytes = per * sizeof(T)
     host = u isa Array ? u : Vector{T}(undef, length(u))
     mine = blockrange(forest)
@@ -2365,7 +2185,7 @@ function read_blocks!(u, r::Ranks, s, layout, table, readers, opened, forest, co
         readers[p] == r.rank || continue
         entry, part = table[p], opened[p]
         dset, stored = part.datasets[s], part.sums[s]
-        dims = (block_dims(forest.N, Val(D), layout.limbs)..., layout.nvars,
+        dims = (block_dims(forest.N, c, layout.limbs)..., layout.nvars,
                 length(entry.blocks))
         isempty(entry.blocks) && continue
         owner(b) = equalsplit_part(n, P, b) - 1
@@ -2736,92 +2556,5 @@ function get_plain(obj)
     throw(ArgumentError(
         "$path has the plain-data type $(repr(tag)), which this version does not read: " *
         "it was written by a newer version, or not by `write_plain`"))
-end
-
-# One field set's appendix (TreeAMR's M20) into the state vector `u`,
-# after its cores, as `read_blocks!` reads the data: each owner posts its
-# receives into the appendix of its state vector, each reader reads its
-# parts' appendices for each owner a piece at a time, checks each block's
-# CRC-32C and sends it. The lengths of the blocks' appendices follow from
-# the leaves, the same on every rank.
-function read_appendix!(u, r::Ranks, s, fs, layout, table, readers, opened, forest,
-                        context)
-    n, P = nleaves(forest), r.size
-    T, F = layout.T, layout.F
-    host = u isa Array ? u : Vector{T}(undef, length(u))
-    u isa Array || copyto!(host, u)            # the cores, read already
-    mine = blockrange(forest)
-    mylens = appendix_lengths(fs, mine)
-    myoffs = corelength(fs) .+ cumsum([0; mylens])
-    offset = first(mine) - 1
-    requests = Any[]
-    for p in eachindex(table)
-        readers[p] == r.rank && continue
-        blocks = intersect(table[p].blocks, mine)
-        isempty(blocks) && continue
-        rel = blocks .- offset
-        for piece in appendix_pieces(view(mylens, rel), sizeof(T))
-            rows = rel[piece]
-            push!(requests, irecv(r.comm, view(host, appendix_elements(myoffs, rows)),
-                                  readers[p], TAG_LOAD))
-        end
-    end
-    err = nothing
-    bad = Int[]
-    buffers = (Vector{T}(undef, 0), Vector{T}(undef, 0))
-    pending = Any[nothing, nothing]
-    turn = 1
-    for p in eachindex(table)
-        readers[p] == r.rank || continue
-        entry, part = table[p], opened[p]
-        isempty(entry.blocks) && continue
-        dset, stored = part.appendices[s], part.appsums[s]
-        lens = appendix_lengths(fs, entry.blocks)
-        offs = cumsum([0; lens])
-        dims = (layout.limbs..., offs[end])
-        owner(b) = equalsplit_part(n, P, b) - 1
-        for q in owner(first(entry.blocks)):owner(last(entry.blocks))
-            blocks = intersect(entry.blocks, rankblocks(n, P, q))
-            isempty(blocks) && continue
-            rel = blocks .- (first(entry.blocks) - 1)
-            for piece in appendix_pieces(view(lens, rel), sizeof(T))
-                rows = rel[piece]
-                elems = appendix_elements(offs, rows)
-                if q == r.rank
-                    buf = host
-                    start = myoffs[first(rows) + first(entry.blocks) - 1 - offset] + 1
-                else
-                    turn = 3 - turn
-                    pending[turn] === nothing || waitall(r.comm, [pending[turn]])
-                    pending[turn] = nothing
-                    buf, start = buffers[turn], 1
-                    length(buf) < length(elems) && resize!(buf, length(elems))
-                end
-                err = attempt(err) do
-                    GC.@preserve buf block_slab(API.h5d_read, dset, F, dims, elems,
-                                                pointer(buf, start))
-                    at = start
-                    for b in rows
-                        crc_of(buf, at, lens[b]) == stored[b] ||
-                            push!(bad, entry.blocks[b])
-                        at += lens[b]
-                    end
-                end
-                q == r.rank ||
-                    (pending[turn] = isend(r.comm, view(buf, 1:length(elems)), q,
-                                           TAG_LOAD))
-            end
-        end
-    end
-    waitall(r.comm, [requests; filter(!isnothing, pending)])
-    agree_errors(r, err, "load_checkpoint, reading the appendices,")
-    count, b = damage(r, sort!(bad))
-    count == 0 || throw(ArgumentError(
-        "the appendix of field set $(repr(layout.name)) does not match the checksums " *
-        "stored with it in $count of its $n blocks, the first being block $b (a CRC-32C " *
-        "per block): the file was damaged while or after it was written, and is " *
-        "refused rather than restored into a wrong state. " * writer_note(context)))
-    host === u || copyto!(u, host)
-    return u
 end
 

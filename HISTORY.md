@@ -176,6 +176,18 @@ between two layouts:
   ghost fill with the application's hook, and are the visualization
   sidecar's (M9b) to write.
 
+TreeAMR 0.3 (its M22, closed blocks) made the question moot: every block
+owns both face planes of a vertex-like dimension, so the state vector is
+the closed blocks with real values on every plane, and the appendix is
+gone from TreeAMR and from here. Ported in TreeAMR's M22 step 10
+(2026-11-26): a set with a vertex-like dimension stores its closed
+blocks under the feature `closed_blocks`, the `appendix` datasets and
+the part table's `appendix_crc32c` are no longer written, and a file of
+the half-open layout with a vertex-like set (M20's appendix included) is
+refused, as the review of M22's step 10 plan decided pending Erik's
+answer on what such a file becomes. The `walls` attribute of AMR-8's
+symmetric walls went with them: TreeAMR 0.3 has no `walls` keyword.
+
 ## Checkpoints over MPI
 
 Checkpoints without parallel I/O were decided on 2026-10-02 with Erik, as M7's step 6b, replacing the shared file: one writer and one opener per file, the removal of `TreeAMRHDF5MPIExt`, `open_parallel_file`, `librarycomm` and the hints, `io = :node` as the default, and the file names were decided then; the integer `io` clamp and the contiguous groups for non-contiguous nodes were decided while implementing it. The external links for tools were recommended to Erik and included.

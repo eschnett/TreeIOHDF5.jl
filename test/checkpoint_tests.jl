@@ -396,7 +396,7 @@ file_features(path) = h5open(file -> read_attribute(file["TreeAMR.jl"], "feature
     save_checkpoint(path, forest; fieldsets=Tuple(n => (fs, u) for (n, fs, u) in
                                                   zip(names, sets, states)),
                     application="Rotating" => 1)
-    @test file_features(path) == ["brick", "rotating"]
+    @test file_features(path) == ["brick", "rotating", "closed_blocks"]
     ck = load_checkpoint(path; types=(Float32x2,))
     @test ck.forest.rotating == forest.rotating
     @test TreeAMR.rotating_dims(ck.forest) == (1, 2)
@@ -576,35 +576,56 @@ end
     @test_throws "both reflecting and outflow" load_checkpoint(both)
 end
 
-@testset "Symmetric walls are saved and restored, and a file that hides them is refused" begin
-    # The failure: a set with `walls = :symmetric` restored with half-open
-    # walls, whose fill leaves its low wall planes as they are; or a file
-    # whose sets and feature disagree, read anyway. A file whose sets all
-    # have half-open walls lists nothing new and stores nothing new.
+@testset "A vertex-like set is stored closed, and a file that hides it is refused" begin
+    # The failure: a set with a vertex-like dimension stored or read with
+    # `N` points along it, as the half-open layout before TreeAMR 0.3 held
+    # it, rather than the `N + 1` of its closed blocks (TreeAMR's M22); or
+    # a file of the half-open layout read into closed blocks, its points
+    # shifted by a plane. A file whose sets are all cell-like lists
+    # nothing new.
     forest = Forest((2, 2); N=4, outflow=((true, true), (false, false)))
-    sym = FieldSet(forest, 1; G=1, centering=vertexcentered(2), walls=:symmetric)
-    half = FieldSet(forest, 1; G=1, centering=vertexcentered(2))
+    v = FieldSet(forest, 1; G=1, centering=vertexcentered(2))
+    x = FieldSet(forest, 2; G=1, centering=facecentered(2, 1))
+    c = FieldSet(forest, 1; G=1)
     dir = mktempdir()
-    path = joinpath(dir, "walls.h5")
-    save_checkpoint(path, forest; fieldsets=("sym" => sym, "half" => half),
-                    application="Walls" => 1)
-    @test file_features(path) == ["brick", "outflow", "symmetric_walls"]
+    path = joinpath(dir, "closed.h5")
+    rng = MersenneTwister(31)
+    states = [rand(rng, statelength(fs)) for fs in (v, x, c)]
+    save_checkpoint(path, forest;
+                    fieldsets=("v" => (v, states[1]), "x" => (x, states[2]),
+                               "c" => (c, states[3])),
+                    application="Closed" => 1)
+    @test file_features(path) == ["brick", "outflow", "closed_blocks"]
+    h5open(path) do file
+        sets = file[PART * "/fieldsets"]
+        @test size(sets["v/data"]) == (5, 5, 1, 4)
+        @test size(sets["x/data"]) == (5, 4, 2, 4)
+        @test size(sets["c/data"]) == (4, 4, 1, 4)
+    end
     ck = load_checkpoint(path)
-    @test ck.fieldsets["sym"].fieldset.walls === :symmetric
-    @test ck.fieldsets["half"].fieldset.walls === :half_open
+    for (name, u) in zip(("v", "x", "c"), states)
+        @test bytes(ck.fieldsets[name].state) == bytes(u)
+    end
     plain = joinpath(dir, "plain.h5")
-    save_checkpoint(plain, forest; fieldsets=("half" => half,), application="Walls" => 1)
+    save_checkpoint(plain, forest; fieldsets=("c" => c,), application="Closed" => 1)
     @test file_features(plain) == ["brick", "outflow"]
-    @test !h5open(f -> haskey(attributes(f["TreeAMR.jl/fieldsets/half"]), "walls"), plain)
 
+    # Without the feature the file is of the half-open layout, and so is a
+    # set with the `walls` attribute of TreeAMR's AMR-8; both are refused,
+    # saying why. Its cell-like sets still load.
     unlisted = edited_copy(path, "unlisted.h5") do file
         replace_attribute!(file["TreeAMR.jl"], "features", ["brick", "outflow"])
     end
-    @test_throws "does not list the feature \"symmetric_walls\"" load_checkpoint(unlisted)
-    odd = edited_copy(path, "odd.h5") do file
-        replace_attribute!(file["TreeAMR.jl/fieldsets/sym"], "walls", "closed")
+    @test_throws "was written with half-open ownership, before TreeAMR 0.3" load_checkpoint(
+        unlisted)
+    @test bytes(load_checkpoint(unlisted; fieldsets=("c",)).fieldsets["c"].state) ==
+          bytes(states[3])
+    walled = edited_copy(path, "walled.h5") do file
+        replace_attribute!(file["TreeAMR.jl"], "features",
+                           ["brick", "outflow", "symmetric_walls"])
+        write_attribute(file["TreeAMR.jl/fieldsets/v"], "walls", "symmetric")
     end
-    @test_throws "has the walls \"closed\"" load_checkpoint(odd)
+    @test_throws "(with symmetric walls)" load_checkpoint(walled)
 end
 
 # Element sets (TreeAMR's M16): an element-centered set beside a cell set
@@ -842,7 +863,7 @@ end
     save_checkpoint(path, forest; fieldsets=Tuple(n => (fs, u) for (n, fs, u) in
                                                   zip(names, sets, states)),
                     application="HalfTurn" => 1)
-    @test file_features(path) == ["brick", "halfturn"]
+    @test file_features(path) == ["brick", "halfturn", "closed_blocks"]
     ck = load_checkpoint(path; types=(Float32x2,))
     @test ck.forest.rotating == forest.rotating
     @test TreeAMR.halfturn_dims(ck.forest) == plane
@@ -1087,7 +1108,9 @@ const PATCH_CASES = [
     save_checkpoint(path, forest; fieldsets=Tuple(n => (fs, u) for (n, fs, u) in
                                                   zip(names, sets, states)),
                     application="Patches" => 1)
-    @test file_features(path) == ["patches"; any(fs -> fs.P > 0, sets) ? ["elements"] : []]
+    @test file_features(path) ==
+          ["patches"; any(fs -> fs.P > 0, sets) ? ["elements"] : [];
+           any(fs -> :vertex in fs.centering, sets) ? ["closed_blocks"] : []]
     h5open(path) do file
         g = file["TreeAMR.jl/forest"]
         @test read_attribute(g, "connectivity") == "patches"
@@ -1212,9 +1235,10 @@ end
 
 # Two patches glued to each other at both faces of dimension 1, each
 # wrapped along dimension 2: every face glued, so that a vertex set
-# interpolated across the glue (TreeAMR's M20) owns the glued high face
-# planes of its blocks there, its appendix, which the state vector holds
-# after the cores.
+# interpolated across the glue (TreeAMR's M20) has glued planes on every
+# block face. Under half-open ownership its high face planes there were
+# an appendix after the cores; its closed blocks (TreeAMR's M22) hold
+# them.
 function glued_torus(::Type{T}; N=8, n=2) where {T}
     glue = [glue_both((1, 1, 2), (2, 1, 1), (1, 2)); glue_both((2, 1, 2), (1, 1, 1), (1, 2));
             [(from=(p, 2, s), to=(p, 2, 3 - s), map=(1, 2)) for p in 1:2 for s in 1:2]]
@@ -1222,20 +1246,17 @@ function glued_torus(::Type{T}; N=8, n=2) where {T}
                      glue=glue)
 end
 
-@testset "A set interpolated across a glue round-trips with its appendix: $T" for
-        T in (Float64, Float32x2)
+@testset "A set interpolated across a glue round-trips: $T" for T in (Float64, Float32x2)
     # The failure: a set loaded without its glue mode, which builds and
-    # copies where it interpolated, or without its appendix, whose planes
-    # would come back zero; or an appendix damaged, or hidden behind a
-    # feature a reader does not see, loaded anyway. Every state, the
-    # appendix included, is compared byte for byte; a set that copies, and
-    # an interpolated set without vertex-like dimensions, store no
-    # appendix.
+    # copies where it interpolated; or a glue mode hidden behind a feature
+    # a reader does not see, loaded anyway. Every state is compared byte
+    # for byte. A closed block (TreeAMR's M22) holds every plane of a
+    # vertex set's glued faces, so nothing is stored beside the data.
     forest = glued_torus(T === Float32x2 ? Float64 : T)
     vfs = FieldSet{T}(forest, 2; G=3, centering=vertexcentered(2), glue=:interpolate)
     cfs = FieldSet{T}(forest, 1; G=3, glue=:interpolate)
     wfs = FieldSet{T}(forest, 1; G=2, centering=vertexcentered(2))
-    @test statelength(vfs) > TreeAMR.corelength(vfs)
+    @test statelength(vfs) == nleaves(forest) * 2 * (forest.N + 1)^2
     rng = MersenneTwister(23)
     states = [T.(rand(rng, statelength(fs))) for fs in (vfs, cfs, wfs)]
     dir = mktempdir()
@@ -1244,18 +1265,15 @@ end
                     fieldsets=("v" => (vfs, states[1]), "c" => (cfs, states[2]),
                                "w" => (wfs, states[3])),
                     application="Glue" => 1)
-    @test file_features(path) == ["patches", "interpolated_glue"]
+    @test file_features(path) == ["patches", "interpolated_glue", "closed_blocks"]
     h5open(path) do file
         sets = file["TreeAMR.jl/fieldsets"]
         @test read_attribute(sets["v"], "glue") == "interpolate"
         @test read_attribute(sets["c"], "glue") == "interpolate"
         @test !haskey(attributes(sets["w"]), "glue")
         part = file[PART * "/fieldsets"]
-        nlimbs = T === Float32x2 ? 2 : 1
-        @test length(part["v/appendix"]) ==
-              nlimbs * (statelength(vfs) - TreeAMR.corelength(vfs))
-        @test length(part["v/appendix_crc32c"]) == nleaves(forest)
-        @test !haskey(part["c"], "appendix") && !haskey(part["w"], "appendix")
+        @test all(name -> keys(part[name]) == ["data", "data_crc32c"], ("v", "c", "w"))
+        @test !haskey(file["TreeAMR.jl/parttable"], "appendix_crc32c")
     end
     ck = load_checkpoint(path; types=(Float32x2,))
     for (name, fs, u) in zip(("v", "c", "w"), (vfs, cfs, wfs), states)
@@ -1263,14 +1281,12 @@ end
         @test back.fieldset.glue === fs.glue
         @test bytes(back.state) == bytes(u)
     end
-    # The appendix as the working array holds it after the load: its
-    # planes, which no fill writes, are the saved ones.
     v = statevector(ck.fieldsets["v"].fieldset)
     gather!(v, ck.fieldsets["v"].fieldset)
     @test bytes(v) == bytes(states[1])
 
     unlisted = edited_copy(path, "unlisted.h5") do file
-        replace_attribute!(file["TreeAMR.jl"], "features", ["patches"])
+        replace_attribute!(file["TreeAMR.jl"], "features", ["patches", "closed_blocks"])
     end
     @test_throws "does not list the feature \"interpolated_glue\"" load_checkpoint(
         unlisted; types=(Float32x2,))
@@ -1278,19 +1294,15 @@ end
         replace_attribute!(file["TreeAMR.jl/fieldsets/v"], "glue", "copy")
     end
     @test_throws "has the glue mode \"copy\"" load_checkpoint(odd; types=(Float32x2,))
-    missing_ = edited_copy(path, "missing.h5") do file
-        HDF5.delete_object(file[PART * "/fieldsets/v"], "appendix")
+    # A file of the half-open layout, which stored the glued planes as an
+    # appendix, is refused as any half-open file with a vertex-like set is.
+    halfopen = edited_copy(path, "halfopen.h5") do file
+        replace_attribute!(file["TreeAMR.jl"], "features", ["patches", "interpolated_glue"])
     end
-    @test_throws "holds no appendix of field set \"v\"" load_checkpoint(
-        missing_; types=(Float32x2,))
-    damaged = edited_copy(path, "damaged.h5") do file
-        d = file[PART * "/fieldsets/v/appendix"]
-        x = read(d)
-        x[end] = -x[end] - 1
-        d[ntuple(_ -> Colon(), ndims(x))...] = x
-    end
-    @test_throws "appendix of field set \"v\" does not match the checksums" load_checkpoint(
-        damaged; types=(Float32x2,))
+    @test_throws "was written with half-open ownership" load_checkpoint(
+        halfopen; types=(Float32x2,))
+    @test bytes(load_checkpoint(halfopen; types=(Float32x2,),
+                                fieldsets=("c",)).fieldsets["c"].state) == bytes(states[2])
 end
 
 # The glue of the seven-patch ball of TreeMultiPatch (TreeAMR's M20): a
@@ -1323,21 +1335,19 @@ function seven_ball_forest(n, m; N=8)
     return Forest(patches; N=N, glue=glue)
 end
 
-@testset "The seven-patch ball's appendix round-trips, cube edges and corners included" begin
-    # The failure: an appendix misplaced where it is irregular — at the
-    # cube's edges, where three shells meet, and its corners, where four
-    # patches do, a block owning one, two or three planes, its points
-    # counted once in the plane of the lowest dimension. The state comes
-    # back byte for byte, with as many appendix entries as TreeAMR counts.
+@testset "The seven-patch ball round-trips, cube edges and corners included" begin
+    # The failure: a closed block's planes misplaced where the glue is
+    # irregular — at the cube's edges, where three shells meet, and its
+    # corners, where four patches do. The state comes back byte for byte,
+    # every block `(N + 1)³` points a variable.
     forest = seven_ball_forest(2, 1)
     fs = FieldSet(forest, 2; G=3, centering=vertexcentered(3), glue=:interpolate)
-    n = TreeAMR.corelength(fs)
-    @test statelength(fs) - n ==
-          sum(j -> TreeAMR.appendix_entries(fs, j), 1:nleaves(forest))
+    @test statelength(fs) == nleaves(forest) * 2 * (forest.N + 1)^3
     u = rand(MersenneTwister(29), statelength(fs))
     path = joinpath(mktempdir(), "ball.h5")
     save_checkpoint(path, forest; fieldsets=("u" => (fs, u),), application="Ball" => 1)
-    @test h5open(f -> length(f[PART * "/fieldsets/u/appendix"]), path) == length(u) - n
+    @test h5open(f -> size(f[PART * "/fieldsets/u/data"]), path) ==
+          (9, 9, 9, 2, nleaves(forest))
     ck = load_checkpoint(path)
     back = ck.fieldsets["u"]
     @test back.fieldset.glue === :interpolate
@@ -1801,22 +1811,25 @@ end
 
 const FIXTURES = joinpath(@__DIR__, "fixtures")
 
-@testset "A version-1 file, written before the part files, still loads" begin
+@testset "A version-1 file, written before the part files, still loads its cell sets" begin
     # The failure: a reader of format version 2 that no longer reads the
     # single files every earlier version wrote — those of M9a, and the
     # shared files of M7 step 6 — or reads them differently; and one that
     # refuses a version-1 file without checksums, which are optional there.
+    # Their vertex set `w` is of the half-open layout, before TreeAMR 0.3's
+    # closed blocks, and is refused, saying so; the cell set `u` loads.
     forest = fixture_forest()
-    u, w = fixture_sets(forest)
+    u, _ = fixture_sets(forest)
     want(fs) = (v = statevector(fs); gather!(v, fs); bytes(v))
     for name in ("plain", "filtered")
         path = joinpath(FIXTURES, "checkpoint-v1-$name.h5")
-        ck = load_checkpoint(app -> read_plain(app, "extra"), path; types=(Float32x2,))
+        @test_throws "was written with half-open ownership" load_checkpoint(
+            path; types=(Float32x2,))
+        ck = load_checkpoint(app -> read_plain(app, "extra"), path; types=(Float32x2,),
+                             fieldsets=("u",))
         @test ck.forest.leaves == forest.leaves
         @test ck.forest.faces == forest.faces
         @test bytes(ck.fieldsets["u"].state) == want(u)
-        @test bytes(ck.fieldsets["w"].state) == want(w)
-        @test ck.fieldsets["w"].fieldset.parity == w.parity
         @test ck.data == (; t=1 // 3, chunk=7, tags=["a", "", "c"], name="fixture")
         @test ck.result == [1, 2, 3]
         @test (ck.provenance.nranks, ck.provenance.nparts) == (1, 1)

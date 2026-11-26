@@ -1,6 +1,5 @@
 # Copied verbatim from TreeAMR's `test/ghost_oracles.jl` (a shared test helper); the
 # `CODE.md` it cites is TreeAMR's.
-
 # Helpers for the ghost-exchange tests. As in oracles.jl, these check
 # the implementation against something independent of it — analytic
 # polynomial values, an explicit tiling, and a direct count of writes.
@@ -154,13 +153,13 @@ arbitrary_value(::Type{T}, p, v::Integer) where {T} =
     T(2 * (hash((p, v)) / typemax(UInt64)) - 1)
 
 """
-Fill every owned point of every block from [`arbitrary_value`](@ref), or
-every *closed*-range point with `closed = true` — which is what a block
-computes for itself when it holds a flux or an EMF, the shared plane
-included, and so what the interface restriction finds in place.
+Fill every own point of every block from [`arbitrary_value`](@ref): the
+closed range along a vertex-like dimension, both face planes (M22). The
+keyword `closed` asked for that range under half-open ownership, and is
+the default's now.
 """
-function fill_arbitrary!(fs::FieldSet{T,D}; closed::Bool=false) where {T,D}
-    c = closed ? staggers(fs) : ntuple(_ -> 0, D)
+function fill_arbitrary!(fs::FieldSet{T,D}; closed::Bool=true) where {T,D}
+    c = staggers(fs)
     owned = CartesianIndices(ntuple(d -> (fs.G[d] + 1):(fs.G[d] + fs.forest.N + c[d]), D))
     for b in 1:nblocks(fs), v in 1:fs.nvars, idx in owned
         fs.work[Tuple(idx)..., v, b] =
@@ -286,6 +285,51 @@ function nested_forest(::Val{D}; T=Float64, N=4, roots=4,
     return forest
 end
 
+"""
+The nested mesh TreeGeneralizedHarmonic reported (its issue 11), at a
+size of the caller's choosing: a reflecting octant `[0, 32]^D` of `4^D`
+roots, with the cubes `[0, 16)^D`, `[0, 8)^D` and `[0, 4)^D` refined to
+levels 1, 2 and 3. Every shell is two blocks thick, so no prolongation
+reads a ghost of its coarse source that another prolongation wrote.
+"""
+function nested_octant(::Val{D}; T=Float64, N=8) where {D}
+    forest = Forest{T}(ntuple(_ -> 4, D); N=N, reflecting=ntuple(_ -> (true, false), D),
+                       extents=ntuple(_ -> (0, 32), D))
+    for (lvl, side) in ((0, 16), (1, 8), (2, 4))
+        inside = filter(k -> level(k) == lvl &&
+                             all(e -> e[2] <= side, block_extent(forest, k)), forest.leaves)
+        refine!(forest, inside)
+        balance!(forest)
+    end
+    return forest
+end
+
+"""
+A serial ghost fill run stage by stage through the package's own pieces,
+as `fill_ghosts!` runs it, but with the phase-2 stages in the groups
+`groups` (runs of `schedule.stages`) instead of `schedule.stagegroups`:
+each group's stages one at a time, in reverse level order when
+`reverse`, and the relative hook's regions after the whole group, in
+level order, as the grouped fill runs them. `[i:i for i in
+eachindex(schedule.stages)]` is the fill with every stage alone.
+"""
+function fill_stagewise!(fs, schedule, groups; boundary=nothing, reverse=false)
+    forest, stages, backend = schedule.forest, schedule.stages, TreeAMR.CPU()
+    first(groups) == 1:1 || error("phase 1 runs alone")
+    TreeAMR.run_stage!(fs, stages[1], forest, backend, nothing)
+    boundary === nothing || TreeAMR.apply_boundary!(fs, boundary, schedule, backend)
+    for group in groups[2:end]
+        for i in (reverse ? Base.reverse(group) : group)
+            TreeAMR.run_stage!(fs, stages[i], forest, backend, nothing)
+        end
+        boundary === nothing && continue
+        for i in group
+            TreeAMR.boundary_after_stage!(fs, boundary, schedule, backend, stages[i].tag)
+        end
+    end
+    return fs
+end
+
 """Refine wherever `pred(block center, level)` holds, then rebalance."""
 function refine_where!(forest, pred, passes)
     for _ in 1:passes
@@ -379,18 +423,21 @@ function closed_values(fs::FieldSet{T,D}) where {T,D}
 end
 
 """
-The interface restriction computed by hand, as `(block, stored index) =>
-expected value` for every point it should touch.
+The coarse copies `unify!` restricts, computed by hand, as `(block, stored
+index) => expected value` (M22 rule 1).
 
-For every block, every vertex-like dimension and both sides,
-`neighbor_keys` says whether the neighbours across that face are finer;
-where they are, the block's boundary plane must come back as the average
-of the coincident fine values. *Which* fine values those are is decided
-by position and nothing else — a cell-like tangential dimension
+An own point of a block on one of its face planes along a vertex-like
+dimension is the coarse copy of a finer one wherever a block one level
+finer holds the point in its closed box — across a face, an edge or a
+corner, a diagonal finer block's included. Its value must come back as
+the average of the coincident fine values: a cell-like dimension
 contributes the two fine points half a fine spacing to either side, a
-vertex-like one the single coincident point — from the exact rational
-geometry of [`exact_point`](@ref), never from the package's stencils or
-target ranges.
+vertex-like one the single coincident point. Which points those are is
+decided by position and nothing else, from the exact rational geometry
+of [`exact_point`](@ref) and [`leafbox`](@ref), never from the package's
+stencils or target ranges. Same-level secondaries, which `unify!` also
+writes, are not listed: on data from [`arbitrary_value`](@ref) they keep
+their value.
 
 `values` is [`closed_values`](@ref) of the *pristine* field set, taken
 before the restriction runs.
@@ -399,54 +446,51 @@ function interface_targets(fs::FieldSet{T,D}, values) where {T,D}
     forest = fs.forest
     N, G, c = forest.N, fs.G, staggers(fs)
     wrap(d, x) = forest.periodic[d] ? mod(x, forest.roots[d]) : x
+    boxes = Dict(l => [leafbox(forest, k) for k in forest.leaves if level(k) == l]
+                 for l in unique(level.(forest.leaves)))
+    holds((lo, hi), p) = all(1:D) do d
+        any(x -> lo[d] <= x <= hi[d],
+            forest.periodic[d] ? (p[d], p[d] + forest.roots[d]) : (p[d],))
+    end
     out = Dict{Tuple{Int,NTuple{D,Int}},Vector{T}}()
     for b in 1:nblocks(fs)
         k = blockkey(fs, b)
         l = level(k)
+        haskey(boxes, l + 1) || continue
         half = 1 // (2 * N * (1 << (l + 1)))        # half a fine spacing, in root cells
-        for d in 1:D
-            c[d] == 1 || continue
-            for s in (-1, 1)
-                δ = ntuple(e -> e == d ? s : 0, D)
-                nbrs = neighbor_keys(forest, k, δ)
-                (isempty(nbrs) || level(first(nbrs)) <= l) && continue
-                # 2:1 balance, so the finer side is exactly one level down.
-                @assert all(nbr -> level(nbr) == l + 1, nbrs)
-                plane = s == 1 ? G[d] + N + 1 : G[d] + 1
-                rng = ntuple(e -> e == d ? (plane:plane) :
-                             ((G[e] + 1):(G[e] + N + c[e])), D)
-                shifts = Iterators.product(ntuple(e -> (e != d && c[e] == 0) ?
-                                                  (-1, 1) : (0,), D)...)
-                for idx in CartesianIndices(rng)
-                    p = exact_point(fs, b, Tuple(idx))
-                    acc = zeros(T, fs.nvars)
-                    n = 0
-                    for sh in shifts
-                        q = ntuple(e -> wrap(e, p[e] + sh[e] * half), D)
-                        acc .+= values[(l + 1, q)]
-                        n += 1
-                    end
-                    out[(b, Tuple(idx))] = acc ./ n
-                end
+        shifts = Iterators.product(ntuple(e -> c[e] == 0 ? (-1, 1) : (0,), D)...)
+        for idx in CartesianIndices(ntuple(d -> (G[d] + 1):(G[d] + N + c[d]), D))
+            I = Tuple(idx)
+            any(d -> c[d] == 1 && (I[d] == G[d] + 1 || I[d] == G[d] + N + 1), 1:D) ||
+                continue
+            p = exact_point(fs, b, I)
+            any(bx -> holds(bx, p), boxes[l + 1]) || continue
+            acc = zeros(T, fs.nvars)
+            n = 0
+            for sh in shifts
+                q = ntuple(e -> wrap(e, p[e] + sh[e] * half), D)
+                acc .+= values[(l + 1, q)]
+                n += 1
             end
+            out[(b, I)] = acc ./ n
         end
     end
     return out
 end
 
 """
-How many times each phase of an [`InterfaceSchedule`](@ref) writes each
-stored point: one count array per phase, in phase order.
+How many times the one stage of a [`UnifySchedule`](@ref) writes each
+stored point, as a one-element vector of count arrays.
 
-A phase must write every target exactly once — the fixup overwrites a
-block's own computed values, so a double write would make the result
-depend on which of two fine sources landed last.
+The stage must write every target exactly once — it overwrites a block's
+own computed values, so a double write would make the result depend on
+which of two sources landed last.
 """
-function interface_write_counts(isched::InterfaceSchedule{T,D}) where {T,D}
+function interface_write_counts(isched::UnifySchedule{T,D}) where {T,D}
     forest = isched.forest
     c = staggers(isched.centering)
     stored = ntuple(d -> forest.N + 2 * isched.G[d] + c[d], D)
-    return map(isched.phases) do groups
+    return map([isched.unify]) do groups
         counts = zeros(Int, stored..., nleaves(forest))
         for group in groups
             blen = boxsize(group)
@@ -463,13 +507,13 @@ function interface_write_counts(isched::InterfaceSchedule{T,D}) where {T,D}
 end
 
 """
-Every `(block, stored index)` an [`InterfaceSchedule`](@ref) writes and
-every one it reads, as two sets over all phases.
+Every `(block, stored index)` a [`UnifySchedule`](@ref) writes and every
+one it reads, as two sets.
 """
-function interface_touches(isched::InterfaceSchedule{T,D}) where {T,D}
+function interface_touches(isched::UnifySchedule{T,D}) where {T,D}
     targets = Set{Tuple{Int,NTuple{D,Int}}}()
     sources = Set{Tuple{Int,NTuple{D,Int}}}()
-    for groups in isched.phases, group in groups
+    for group in isched.unify
         blen = boxsize(group)
         tfirst = ntuple(d -> group.stencils[d].targetfirst, D)
         srcstart = ntuple(d -> group.stencils[d].srcstart, D)
@@ -505,7 +549,9 @@ face_outflow(kind::Symbol) = (kind === :outflow_lo || kind === :outflow_both,
 
 """
 A brick of side `roots` (3 in 1D, 2 otherwise) whose faces are `kinds`,
-refined twice at the low and at the high corner.
+refined twice at the low and at the high corner, or not at all with
+`refined = false`. Besides `FACE_KINDS`, a dimension may be
+`:outflow_lo`, `:outflow_hi` or `:outflow_both`.
 
 That puts all three levels against the walls, with the coarse-fine faces
 meeting a wall *tangentially* — a level-2 block, a level-1 block and a
@@ -513,13 +559,15 @@ level-0 block in a row along it — which is the case where a mirrored
 ghost is the block's own prolongated ghost, and where filling it at the
 wrong time reads it undefined.
 """
-function faces_forest(kinds::NTuple{D,Symbol}; T::Type=Float64, N=8) where {D}
+function faces_forest(kinds::NTuple{D,Symbol}; T::Type=Float64, N=8,
+                      refined::Bool=true) where {D}
     roots = D == 1 ? 3 : 2
     forest = Forest{T}(ntuple(_ -> roots, D); N=N,
                        periodic=map(face_periodic, kinds),
                        reflecting=map(face_reflecting, kinds),
                        outflow=map(face_outflow, kinds),
                        extents=ntuple(_ -> (0, roots), D))
+    refined || return forest
     corner(c, r) = all(d -> c[d] < r, 1:D) || all(d -> c[d] > roots - r, 1:D)
     refine_where!(forest, (c, lvl) -> (lvl == 0 && corner(c, 1.0)) ||
                                       (lvl == 1 && corner(c, 0.5)), 2)
@@ -539,6 +587,9 @@ Along each dimension the data is a cubic `c₀ + c₁y + c₂y² + c₃y³` in
 - reflecting at both ends: constant, since no nonconstant polynomial is
   even about two points, and so both variables are even there;
 - periodic: constant, since no nonconstant polynomial is periodic;
+- outflow at either end: constant, the one polynomial the zero-gradient
+  copy reproduces exactly on a refined mesh (a coarse neighbor's clamped
+  ghosts reach a fine block's tangential prolongation);
 - outer at both ends: a general polynomial, and the hook supplies it.
 
 Terms of degree `≥ p` are dropped. The parity is `NoParity` wherever
@@ -602,19 +653,21 @@ deviation of any stored value from the data.
 
 `NaN` is what makes the fill's *order* visible. A ghost the schedule
 never writes stays `NaN`; one it writes from a ghost that has not been
-written yet becomes `NaN`, since every stencil weight is nonzero and
-`NaN` survives any finite combination. A zero-initialized field set shows
+written yet becomes `NaN`, since `NaN` survives any finite combination.
+(Along a dimension where a target's column has a single nonzero weight,
+the CPU's shaped fill reads only that source, so there an unwritten ghost
+shows only if the value depends on it.) A zero-initialized field set shows
 neither: a stale zero is just a wrong number, and may even be the right
 one.
 """
 function undefined_ghosts(kinds::NTuple{D,Symbol}, C::NTuple{D,Symbol};
                           T::Type=Float64, p::Int=4, N::Int=8,
-                          family=PointValue, backend=CPU()) where {D}
+                          family=PointValue, backend=CPU(), bounded=false) where {D}
     forest = faces_forest(kinds; T=T, N=N)
     f, parity = parity_data(T, kinds, p)
     ops = family === Conservative ?
-          Operators(prolongation=p, restriction=2, family=Conservative) :
-          Operators(prolongation=p, restriction=p)
+          Operators(prolongation=p, restriction=2, family=Conservative, bounded=bounded) :
+          Operators(prolongation=p, restriction=p, bounded=bounded)
     fs = FieldSet{T}(forest, 2; G=ghosts_for(C, p), centering=C, parity=parity,
                      backend=backend)
     fill!(fs.work, T(NaN))
@@ -631,6 +684,7 @@ function undefined_ghosts(kinds::NTuple{D,Symbol}, C::NTuple{D,Symbol};
     end
     return nnan, worst
 end
+
 
 """
 How many transfers of each kind the schedule *mirrors* across a
@@ -658,11 +712,12 @@ occur. The remaining dimensions are periodic on both domains.
 `:hi` on `[-2, 0]` with its wall above.
 
 Returns `(maxdiff, ncells)`, or `nothing` if the two refinement patterns
-failed to correspond.
+failed to correspond. `ops` replaces the order-`p` point-value operators,
+for the conservative family and its bounded prolongation.
 """
 function reflecting_vs_doubled(::Val{D}; side::Symbol, centering::NTuple{D,Symbol},
-                               N=8, p=4) where {D}
-    ops = Operators(prolongation=p, restriction=p)
+                               N=8, p=4,
+                               ops=Operators(prolongation=p, restriction=p)) where {D}
     G = ghosts_for(centering, p)
     others = ntuple(d -> d == 1 ? false : true, D)
     xext = side === :lo ? (0.0, 2.0) : (-2.0, 0.0)
@@ -1183,9 +1238,9 @@ Returns [`compare_matching_blocks`](@ref)'s `(worst, npoints)`, or
 `nothing` if the refinements failed to correspond.
 """
 function rotating_vs_quadrupled(::Val{D}; rotating, centering::NTuple{D,Symbol},
-                                other=:periodic, N=8, p=4) where {D}
+                                other=:periodic, N=8, p=4,
+                                ops=Operators(prolongation=p, restriction=p)) where {D}
     quad, full = quadrant_and_full(Val(D); rotating=rotating, other=other, N=N)
-    ops = Operators(prolongation=p, restriction=p)
     G = ghosts_for(centering, p)
     f = rotating_data(D, rotating, other)
     parity = vector_parity(D, rotating, other)
@@ -1406,9 +1461,125 @@ function rotating_regrid_vs_quadrupled(::Val{D}; rotating, other=:periodic, N=8,
     return results
 end
 
-# --- M14: half turns (TreeAMR) ------------------------------------------------
+# --- M14: half turns -----------------------------------------------------------
 #
-# The half plane and its data, copied from TreeAMR's `ghost_oracles.jl`.
+# The half plane is checked as the quadrant is, against an unfolded forest
+# built from turned `Rational` boxes and against the full plane holding the
+# turned data explicitly. In root units from the brick's low corner the
+# half plane spans `[0, M1] × [0, M2]` in its plane, and the half turn is
+# `(x1, x2) ↦ (−x1, M2 − x2)`, about the line where the low face of `d1`
+# meets the centre plane of `d2`.
+
+"""The box `(lo, hi)` turned by a half turn about `(0, c)` in the plane `(d1, d2)`."""
+function halfturn_box(box, d1::Int, d2::Int, c)
+    lo, hi = box
+    return (Base.setindex(Base.setindex(lo, -hi[d1], d1), 2c - hi[d2], d2),
+            Base.setindex(Base.setindex(hi, -lo[d1], d1), 2c - lo[d2], d2))
+end
+
+"""
+The unfolded forest of the half plane `half`: `2M1` roots along `d1`, the
+half plane's leaves and their half-turned images, the other dimensions as
+the half plane's. Returns `(full, image, back)` as
+[`unfolded_forest`](@ref) does, with `r` 0 or 2.
+"""
+function unfolded_halfturn_forest(half::Forest{D}) where {D}
+    d1, d2 = TreeAMR.halfturn_dims(half)
+    M1, c = half.roots[d1], half.roots[d2] // 2
+    roots = ntuple(d -> d == d1 ? 2M1 : half.roots[d], D)
+    full = Forest(roots; N=half.N, periodic=half.periodic,
+                  reflecting=TreeAMR.reflecting_faces(half))
+    shift = ntuple(d -> d == d1 ? M1 : 0, D)
+    turn(box, r) = r == 0 ? box : halfturn_box(box, d1, d2, c)
+    image(k, r) = box_key(roots, map(x -> x .+ shift, turn(leafbox(half, k), r)))
+    function back(kf)
+        box = map(x -> x .- shift, leafbox(full, kf))
+        r = box[2][d1] <= 0 ? 2 : 0
+        return r, box_key(half.roots, turn(box, r))
+    end
+    leaves = sort!([image(k, r) for k in half.leaves for r in (0, 2)]; lt=naive_isless)
+    TreeAMR.rebuild_leaves!(full, leaves)
+    return full, image, back
+end
+
+"""
+[`seam_neighbor_mismatches`](@ref) for a half plane: its oriented
+neighbors against the unfolded forest's, turned back, with the
+orientation of an empty region that of the region stepped into.
+"""
+function halfturn_neighbor_mismatches(half::Forest{D}) where {D}
+    d1, d2 = TreeAMR.halfturn_dims(half)
+    full, image, back = unfolded_halfturn_forest(half)
+    mismatches = 0
+    seen = Dict{Tuple{Int,Symbol},Int}()
+    for k in half.leaves, δ in alldirections(Val(D))
+        crossing, keys = TreeAMR.oriented_neighbors(half, k, δ)
+        r = Int(crossing.turns)
+        unfolded = neighbor_keys(full, image(k, 0), δ)
+        expected = map(back, unfolded)
+        ok = if isempty(expected)
+            lo, hi = leafbox(half, k)
+            s = hi[1] - lo[1]
+            isempty(keys) && r == (hi[d1] + s * δ[d1] <= 0 ? 2 : 0)
+        else
+            all(e -> first(e) == r, expected) &&
+                sort(keys; lt=naive_isless) == sort(last.(expected); lt=naive_isless) &&
+                all(zip(unfolded, expected)) do (kf, (_, kq))
+                    level(kf) <= level(k) ||
+                        TreeAMR.virtual_offset(parity_offset(kq), r, d1, d2) ==
+                        parity_offset(kf)
+                end
+        end
+        mismatches += !ok
+        kind = isempty(keys) ? :none : level(first(keys)) == level(k) ? :same :
+               level(first(keys)) < level(k) ? :coarser : :finer
+        seen[(r, kind)] = get(seen, (r, kind), 0) + 1
+    end
+    return mismatches, seen
+end
+
+"""
+Whether the unfolded forest `full` is conforming across the image of the
+seam, the plane `x_{d1} = M1` of the unfolded brick.
+"""
+function halfturn_conforming(full::Forest{D}, d1::Int) where {D}
+    M = full.roots[d1] ÷ 2
+    for kf in full.leaves, s in (-1, 1)
+        δ = ntuple(e -> e == d1 ? s : 0, D)
+        hi = leafbox(full, kf)[2][d1]
+        for nf in neighbor_keys(full, kf, δ)
+            across = (hi <= M) != (leafbox(full, nf)[2][d1] <= M)
+            across && level(nf) != level(kf) && return false
+        end
+    end
+    return true
+end
+
+"""
+A half plane refined and coarsened at random, unbalanced: `M1` roots
+along `d1`, `M2` (even) along `d2`, and the other dimension `other` as in
+[`random_rotating_forest`](@ref).
+"""
+function random_halfturn_forest(rng, ::Val{D}; halfturn, M1, M2, other=:outer, nsteps,
+                                maxlvl) where {D}
+    d1, d2 = halfturn
+    roots = ntuple(d -> d == d1 ? M1 : d == d2 ? M2 : rand(rng, 1:2), D)
+    inplane(d) = d in halfturn
+    periodic = ntuple(d -> !inplane(d) && other === :periodic, D)
+    reflecting = ntuple(d -> (!inplane(d) && other === :reflecting, false), D)
+    forest = Forest(roots; N=4, periodic=periodic, reflecting=reflecting,
+                    halfturn=halfturn)
+    for _ in 1:nsteps
+        k = rand(rng, forest.leaves)
+        if level(k) < maxlvl && rand(rng) < 0.75
+            refine!(forest, k)
+        elseif level(k) > 0
+            p = parentkey(k)
+            all(c -> isleaf(forest, c), childkeys(p)) && coarsen!(forest, p)
+        end
+    end
+    return forest
+end
 
 # The data: a scalar invariant under the half turn `(a, b) ↦ (−a, −b)`
 # about the axis, and a vector that it negates, both in the coordinates
@@ -1510,4 +1681,298 @@ function halfturn_forest(::Val{D}; plane, other=:periodic, T::Type=Float64, N=8,
                        halfturn=full ? nothing : plane, extents=extents)
     refine || return forest
     return refine_where!(forest, halfturn_refinement(D, plane), 2)
+end
+
+"""
+[`undefined_rotated_ghosts`](@ref) for a half plane: `(nnan, worst,
+schedule)` after one fill of `NaN`-prefilled storage with the polynomial
+[`halfturn_data`](@ref).
+"""
+function undefined_halfturn_ghosts(::Val{D}; plane, other, C, p, T::Type=Float64, N=8,
+                                   backend=CPU()) where {D}
+    forest = halfturn_forest(Val(D); plane=plane, other=other, T=T, N=N)
+    f = halfturn_data(D, plane, other; poly=p)
+    fs = FieldSet{T}(forest, D + 1; G=ghosts_for(C, p), centering=C,
+                     halfturn=vector_halfturn(D, plane),
+                     parity=vector_parity(D, plane, other), backend=backend)
+    fill!(fs.work, T(NaN))
+    fill_by_coordinates!(f, fs)
+    schedule = GhostSchedule(fs, Operators(prolongation=p, restriction=p))
+    fill_ghosts!(fs, schedule; boundary=boundary_by_coordinates(f))
+    work = Array(fs.work)
+    nnan = count(isnan, work)
+    worst = 0.0
+    for b in 1:nblocks(fs), idx in CartesianIndices(size(work)[1:D])
+        x = coordinates(fs, b, Tuple(idx))
+        for v in 1:fs.nvars
+            worst = max(worst, Float64(abs(work[idx, v, b] - f(x, v))))
+        end
+    end
+    return nnan, worst, schedule
+end
+
+"""
+Whether every region the schedule hands the hook leaves the domain
+through an outer face: the block's box stepped by the direction, the
+reflected components dropped, and turned back if it lies beyond the
+seam, lies beyond a face of the half plane's brick that is not periodic.
+"""
+function halfturn_hook_regions_leave(schedule::GhostSchedule{T,D}) where {T,D}
+    forest = schedule.forest
+    d1, d2 = TreeAMR.halfturn_dims(forest)
+    c = forest.roots[d2] // 2
+    return all(schedule.boundaries) do region
+        k = forest.leaves[region.block]
+        δ′, _ = TreeAMR.wall_direction(forest, k, region.direction)
+        lo, hi = leafbox(forest, k)
+        s = hi[1] - lo[1]
+        box = (lo .+ s .* δ′, hi .+ s .* δ′)
+        box[2][d1] <= 0 && (box = halfturn_box(box, d1, d2, c))
+        slo, shi = box
+        any(d -> !forest.periodic[d] && (slo[d] < 0 || shi[d] > forest.roots[d]), 1:D)
+    end
+end
+
+"""
+Compare a half plane against the full plane holding the turned data
+explicitly, for the smooth [`halfturn_data`](@ref) and `centering`: both
+`NaN`-prefilled, filled and exchanged once, the outer faces through the
+hook from the same formula. Returns [`compare_matching_blocks`](@ref)'s
+`(worst, npoints)`, or `nothing`.
+"""
+function halfturn_vs_doubled(::Val{D}; plane, centering::NTuple{D,Symbol},
+                             other=:periodic, N=8, p=4,
+                             ops=Operators(prolongation=p, restriction=p)) where {D}
+    half = halfturn_forest(Val(D); plane=plane, other=other, N=N)
+    full = halfturn_forest(Val(D); plane=plane, other=other, N=N, full=true)
+    G = ghosts_for(centering, p)
+    f = halfturn_data(D, plane, other)
+    parity = vector_parity(D, plane, other)
+    fsh = FieldSet(half, D + 1; G=G, centering=centering, parity=parity,
+                   halfturn=vector_halfturn(D, plane))
+    fsf = FieldSet(full, D + 1; G=G, centering=centering, parity=parity)
+    for fs in (fsh, fsf)
+        fill!(fs.work, NaN)
+        fill_by_coordinates!(f, fs)
+        fill_ghosts!(fs, GhostSchedule(fs, ops); boundary=boundary_by_coordinates(f))
+    end
+    return compare_matching_blocks(fsh, fsf)
+end
+
+"""
+The leaf of `half` that the full plane's leaf `kf` is the image of, with
+the orientation `r` (0 or 2), by the boxes: in root units the full plane
+is the half plane's brick with `M1` more roots below it along `d1`.
+"""
+function halfturn_preimage(half::Forest{D}, full::Forest{D}, kf) where {D}
+    d1, d2 = TreeAMR.halfturn_dims(half)
+    shift = ntuple(d -> d == d1 ? half.roots[d1] : 0, D)
+    box = map(c -> c .- shift, leafbox(full, kf))
+    box[2][d1] <= 0 || return 0, box_key(half.roots, box)
+    return 2, box_key(half.roots, halfturn_box(box, d1, d2, half.roots[d2] // 2))
+end
+
+"""
+[`rotating_regrid_vs_quadrupled`](@ref) for a half plane: regrid it
+through `passes`, and the full plane after it to the turned image of each
+result; then fill both and compare. Returns per pass `(moved,
+conforming, images, worst, npoints, nleaves)`.
+"""
+function halfturn_regrid_vs_doubled(::Val{D}; plane, other=:periodic, N=8, p=4,
+                                    C=cellcentered(D), passes) where {D}
+    half = halfturn_forest(Val(D); plane=plane, other=other, N=N)
+    full = halfturn_forest(Val(D); plane=plane, other=other, N=N, full=true)
+    ops = Operators(prolongation=p, restriction=p)
+    f = halfturn_data(D, plane, other)
+    par = vector_parity(D, plane, other)
+    G = ghosts_for(C, p)
+    hs = FieldSet(half, D + 1; G=G, centering=C, parity=par,
+                  halfturn=vector_halfturn(D, plane))
+    fs = FieldSet(full, D + 1; G=G, centering=C, parity=par)
+    fill_by_coordinates!(f, hs)
+    fill_by_coordinates!(f, fs)
+    hhook = formula_hook(hs => f)
+    fhook = formula_hook(fs => f)
+    results = []
+    for rule in passes
+        old = copy(half.leaves)
+        regrid!(half, [hs => GhostSchedule(hs, ops)]; flags=[rule(half, k) for k in half.leaves],
+                boundary=hhook)
+        new = Set(half.leaves)
+        moved = all(k -> regrid_move(k, new) !== nothing, old)
+        fflags = map(full.leaves) do kf
+            _, kh = halfturn_preimage(half, full, kf)
+            something(regrid_move(kh, new), Keep)
+        end
+        regrid!(full, [fs => GhostSchedule(fs, ops)]; flags=fflags, boundary=fhook)
+        images = sort!([last(halfturn_preimage(half, full, kf)) for kf in full.leaves];
+                       lt=naive_isless) ==
+                 sort!(repeat(half.leaves, 2); lt=naive_isless)
+        fill_ghosts!(hs, GhostSchedule(hs, ops); boundary=hhook)
+        fill_ghosts!(fs, GhostSchedule(fs, ops); boundary=fhook)
+        result = compare_matching_blocks(hs, fs)
+        worst, npoints = result === nothing ? (Inf, 0) : result
+        push!(results, (moved=moved, conforming=isbalanced(half), images=images,
+                        worst=worst, npoints=npoints, nleaves=nleaves(half)))
+    end
+    return results
+end
+
+# --- M17: ghosts across glued faces -----------------------------------------------
+#
+# A forest of patches is checked against a meaning given to its points apart
+# from the glue table: `place(p, x)`, a function of a patch and an exact
+# position in its root units that names the same point wherever two patches
+# do. For a brick cut into patches it is the brick's own position, by the
+# exact affine map that laid the patch out; where the patches make no brick,
+# as on a ring or a cubed sphere, it is the patch and the position, and the
+# ghosts are compared with what the donor owns where an independent `across`
+# folds them — the continuous maps of `test/patch_tests.jl`.
+
+"""
+Fill every owned point of every block of `fs` with [`arbitrary_value`](@ref) of
+`place(p, x)`, `p` the block's patch and `x` the point's exact position there
+([`exact_point`](@ref)). Without `WithPatch` (M17 step 5) this is how two
+patches over one logical box are given different data.
+"""
+function fill_patch_arbitrary!(fs::FieldSet{T,D}, place) where {T,D}
+    # The own range, closed along a vertex-like dimension (M22).
+    c = staggers(fs)
+    owned = CartesianIndices(ntuple(d -> (fs.G[d] + 1):(fs.G[d] + fs.forest.N + c[d]), D))
+    for b in 1:nblocks(fs)
+        p = patch(fs.forest, blockkey(fs, b))
+        for v in 1:fs.nvars, idx in owned
+            fs.work[Tuple(idx)..., v, b] =
+                arbitrary_value(T, place(p, exact_point(fs, b, Tuple(idx))), v)
+        end
+    end
+    return fs
+end
+
+"""A boundary hook writing the same into every point of its region."""
+patch_arbitrary_hook(place) =
+    function (fs::FieldSet{T}, b, key, δ, region) where {T}
+        p = patch(fs.forest, key)
+        for idx in region, v in 1:fs.nvars
+            fs.work[Tuple(idx)..., v, b] =
+                arbitrary_value(T, place(p, exact_point(fs, b, Tuple(idx))), v)
+        end
+        return nothing
+    end
+
+"""
+Compare every stored point of every block of `fsp`, over a forest of patches
+laid out in a brick by `place`, with the point of `fsb`, over that brick,
+that `place` carries it to: in the brick's block at the same level whose box
+is the image of the patch block's, at the stored index of the image point.
+An element set's edge and corner ghosts, which are never written, are
+skipped. Returns `(worst, npoints)` as [`compare_matching_blocks`](@ref)
+does, or `nothing` if some block or point has no image there, which means
+the layout and the two forests disagree.
+"""
+function compare_through_layout(fsp::FieldSet{T,D}, fsb::FieldSet{T,D}, place) where {T,D}
+    index = Dict((level(blockkey(fsb, b)), leafbox(fsb.forest, blockkey(fsb, b))[1]) => b
+                 for b in 1:nblocks(fsb))
+    c = staggers(fsp)
+    worst = 0.0
+    npoints = 0
+    for b in 1:nblocks(fsp)
+        k = blockkey(fsp, b)
+        p = patch(fsp.forest, k)
+        lo, hi = leafbox(fsp.forest, k)
+        a, z = place(p, lo), place(p, hi)
+        bb = get(index, (level(k), min.(a, z)), nothing)
+        bb === nothing && return nothing
+        blo = leafbox(fsb.forest, blockkey(fsb, bb))[1]
+        n = fsp.forest.N * (1 << level(k))
+        for idx in CartesianIndices(size(fsp.work)[1:D])
+            fsp.P > 0 && count(d -> !(fsp.G[d] < idx[d] <= fsp.G[d] + fsp.forest.N),
+                               1:D) > 1 && continue
+            X = place(p, exact_point(fsp, b, Tuple(idx)))
+            jdx = ntuple(d -> (X[d] - blo[d]) * n + fsp.G[d] + (c[d] == 1 ? 1 : 1 // 2), D)
+            all(j -> isinteger(j), jdx) || return nothing
+            jdx = Int.(jdx)
+            checkbounds(Bool, fsb.work, jdx..., 1, bb) || return nothing
+            for v in 1:fsp.nvars
+                x, y = fsp.work[Tuple(idx)..., v, b], fsb.work[jdx..., v, bb]
+                worst = x == y ? worst : max(worst, Float64(abs(x - y)))
+                npoints += 1
+            end
+        end
+    end
+    return worst, npoints
+end
+
+"""
+Compare every ghost of `fs` over a forest of patches with what its donor owns
+at the same point, by the oracle `across(p, x, d, s)` of `test/patch_tests.jl`
+(the point of patch `p` at `x`, beyond its face `(d, s)`, as `(q, y)`, or
+`nothing` for a face that is not glued). A stored point that lies inside its
+own patch is compared with the block of that patch that owns it, one beyond
+a single glued face with the owner of its image, and one beyond an unglued
+face or several faces at once is the hook's and skipped. An element set's
+edge and corner ghosts are never written and are skipped too. Returns
+`(mismatches, seen)`, `seen` counting the points compared `:inside` and
+`:glued`.
+"""
+function patch_ghost_mismatches(fs::FieldSet{T,D}, across) where {T,D}
+    forest = fs.forest
+    # The own range, closed along a vertex-like dimension (M22): a point on
+    # a block face is own to every block holding it, all copies equal after
+    # a fill.
+    c = staggers(fs)
+    owned = CartesianIndices(ntuple(d -> (fs.G[d] + 1):(fs.G[d] + forest.N + c[d]), D))
+    owners = Dict{Tuple{Int,NTuple{D,Rational{Int}}},Vector{T}}()
+    for b in 1:nblocks(fs), idx in owned
+        p = patch(forest, blockkey(fs, b))
+        owners[(p, exact_point(fs, b, Tuple(idx)))] =
+            T[fs.work[Tuple(idx)..., v, b] for v in 1:fs.nvars]
+    end
+    mismatches = 0
+    seen = Dict(:inside => 0, :glued => 0)
+    for b in 1:nblocks(fs)
+        k = blockkey(fs, b)
+        p = patch(forest, k)
+        roots = TreeAMR.patch_roots(forest, p)
+        for idx in CartesianIndices(size(fs.work)[1:D])
+            idx in owned && continue
+            outside = count(d -> !(idx[d] in owned.indices[d]), 1:D)
+            fs.P > 0 && outside > 1 && continue
+            x = exact_point(fs, b, Tuple(idx))
+            exits = [(d, x[d] < 0 ? 1 : 2) for d in 1:D
+                     if !(0 <= x[d] < roots[d] || (c[d] == 1 && x[d] == roots[d]))]
+            length(exits) > 1 && continue
+            where_ = isempty(exits) ? (p, x) : across(p, x, only(exits)...)
+            where_ === nothing && continue
+            q, y = where_
+            value = get(owners, (q, Tuple(Rational{Int}.(y))), nothing)
+            ok = value !== nothing &&
+                 all(v -> fs.work[Tuple(idx)..., v, b] == value[v], 1:fs.nvars)
+            mismatches += !ok
+            seen[isempty(exits) ? :inside : :glued] += 1
+        end
+    end
+    return mismatches, seen
+end
+
+"""
+`NaN`-prefill `fs`, fill it with [`fill_patch_arbitrary!`](@ref), exchange
+once with the hook writing the same data, and count the stored values still
+`NaN` that a fill must write — every one, but an element set's edge and
+corner ghosts, which are never written. As for
+[`undefined_rotated_ghosts`](@ref), a ghost never written stays `NaN` and one
+written from an unwritten one becomes `NaN`. Returns `(nnan, schedule)`.
+"""
+function undefined_patch_ghosts(fs::FieldSet{T,D}, ops, place) where {T,D}
+    fill!(fs.work, T(NaN))
+    fill_patch_arbitrary!(fs, place)
+    schedule = GhostSchedule(fs, ops)
+    fill_ghosts!(fs, schedule; boundary=patch_arbitrary_hook(place))
+    owned = ntuple(d -> (fs.G[d] + 1):(fs.G[d] + fs.forest.N), D)
+    nnan = 0
+    for b in 1:nblocks(fs), idx in CartesianIndices(size(fs.work)[1:D])
+        fs.P > 0 && count(d -> !(idx[d] in owned[d]), 1:D) > 1 && continue
+        nnan += count(v -> isnan(fs.work[Tuple(idx)..., v, b]), 1:fs.nvars)
+    end
+    return nnan, schedule
 end
