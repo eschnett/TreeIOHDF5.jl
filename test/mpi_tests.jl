@@ -142,8 +142,7 @@ end
     @test pglue[1] == "4"
     @test words("PC loaded")[3:6] == [pglue; psaved]
     @test words("PC refilled")[3:4] == words("PC filled")[3:4]
-    # A set interpolated across a glue (M20): its cores and its appendix
-    # load as saved, from one part a node and from one part a rank.
+    # A set interpolated across a glue (M20): its state loads as saved, from one part a node and from one part a rank.
     gsaved = words("GC saved")[3:4]
     @test words("GC loaded")[3:4] == gsaved
     @test words("GC-all loaded")[3:4] == gsaved

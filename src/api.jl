@@ -78,10 +78,10 @@ each patch's roots and extents and the glue table instead of the roots,
 `periodic` and the extents) and its leaf list, in curve order; and
 for each field set its element type, `nvars`, `G`, centering, the order
 `P` of an element set, parity, rotation and half-turn map, and its
-**owned** points, in state-vector layout. Not saved:
-the ghosts, the shared boundary planes of a vertex-like dimension and
-the derived wall planes, all of which `fill_ghosts!` rebuilds
-from the owned points with the application's own operators and hook;
+**own** points, in state-vector layout: each block's closed box, `N + 1`
+points along a vertex-like dimension (TreeAMR 0.3). Not saved: the
+ghosts, which `fill_ghosts!` rebuilds from the own points with the
+application's own operators and hook;
 the forest's `generation`; schedules, operators and hooks; and
 a `RotationPair`, which is rebuilt from its two loaded sets, as
 the operators are from the application's own. A forest with a rotating
@@ -90,13 +90,17 @@ TreeAMR from before M12 refuses the file rather than load the seam as
 two outer faces; a file without a seam does not list it, and stays
 readable by every earlier reader of its format version. A half-turn seam
 (TreeAMR's M14) is recorded the same way, by the feature `halfturn`. Outflow faces
-are recorded the same way, by the feature `outflow`, and a field set's
-symmetric walls (`walls = :symmetric`) by the feature `symmetric_walls`,
-an element-centered set (TreeAMR's M16) by the feature `elements`, and a
+are recorded the same way, by the feature `outflow`, a set with a
+vertex-like dimension by the feature `closed_blocks`, a set interpolated
+across a glue by `interpolated_glue`, an element-centered set (TreeAMR's M16) by the feature `elements`, and a
 forest of patches by the feature `patches`, which takes the place of
 `brick`: a reader from before them refuses the file rather than lose the
 glue. A forest of patches is rebuilt through the patches form of
 `Forest`, which checks the glue as it would a caller's.
+A file written before TreeAMR 0.3 holding a set with a vertex-like
+dimension stores it half-open, `N` points along that dimension, and is
+refused, saying why; its other sets load on their own through
+`fieldsets`.
 Beside the leaf
 list and each field set go CRC-32C checksums, one over the leaf list and
 one per block, which `load_checkpoint` verifies (added in M7, after a
