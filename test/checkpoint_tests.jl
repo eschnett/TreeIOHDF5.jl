@@ -576,16 +576,18 @@ end
     @test_throws "both reflecting and outflow" load_checkpoint(both)
 end
 
-@testset "A reloaded forest is anchored as the saved one, off zero: $T" for
+@testset "A reloaded forest places its points as the saved one, off zero: $T" for
     T in (Float64, Float32)
-    # The failure: positions off zero are anchored by the face kinds and the
-    # seam as well as the extents (TreeAMR's M22 step 10d: a symmetry face,
-    # else the centre), so a forest reloaded with other faces than it was
-    # saved with would put every point an ulp away. The file stores the
-    # extents, the faces and the seam, and the reload derives the same
-    # anchor and the same positions bit for bit.
+    # The failure: a reloaded forest whose positions differ from the saved
+    # one's in the last bits, so that data written at a point is read back
+    # at another. Positions are counted from zero where zero is on a
+    # patch's grid, else from its low corner (TreeAMR's M22 steps 10b and
+    # 10f): from the extents and the roots alone, which the file stores,
+    # and not from the face kinds or the seam, so the same extents under
+    # any faces reload to the same block origins bit for bit.
     ext = ((T(0.3), T(1.3)), (T(0.3), T(1.3)))
     dir = mktempdir()
+    origins = Any[]
     for (i, kw) in enumerate(((;), (; reflecting=((false, true), (false, false))),
                               (; reflecting=((true, true), (false, false)),
                                outflow=((false, false), (true, true))),
@@ -598,7 +600,11 @@ end
         back = load_checkpoint(path).forest
         @test TreeAMR.patch_anchor(T, back, 1) == TreeAMR.patch_anchor(T, forest, 1)
         @test all(k -> block_origin(back, k) === block_origin(forest, k), forest.leaves)
+        push!(origins, Dict(k => block_origin(back, k) for k in back.leaves))
     end
+    # A seam's conformity refines more leaves; compare those all have.
+    common = intersect(map(keys, origins)...)
+    @test all(o -> all(k -> o[k] === origins[1][k], common), origins)
 end
 
 @testset "A vertex-like set is stored closed, and a file that hides it is refused" begin
