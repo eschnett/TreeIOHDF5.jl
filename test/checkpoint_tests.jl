@@ -576,6 +576,31 @@ end
     @test_throws "both reflecting and outflow" load_checkpoint(both)
 end
 
+@testset "A reloaded forest is anchored as the saved one, off zero: $T" for
+    T in (Float64, Float32)
+    # The failure: positions off zero are anchored by the face kinds and the
+    # seam as well as the extents (TreeAMR's M22 step 10d: a symmetry face,
+    # else the centre), so a forest reloaded with other faces than it was
+    # saved with would put every point an ulp away. The file stores the
+    # extents, the faces and the seam, and the reload derives the same
+    # anchor and the same positions bit for bit.
+    ext = ((T(0.3), T(1.3)), (T(0.3), T(1.3)))
+    dir = mktempdir()
+    for (i, kw) in enumerate(((;), (; reflecting=((false, true), (false, false))),
+                              (; reflecting=((true, true), (false, false)),
+                               outflow=((false, false), (true, true))),
+                              (; rotating=(1, 2)), (; halfturn=(1, 2))))
+        forest = Forest{T}((2, 2); N=6, extents=ext, kw...)
+        refine!(forest, [first(forest.leaves)])
+        balance!(forest)
+        path = joinpath(dir, "anchor$i.h5")
+        save_checkpoint(path, forest; fieldsets=(), application="Anchor" => 1)
+        back = load_checkpoint(path).forest
+        @test TreeAMR.patch_anchor(T, back, 1) == TreeAMR.patch_anchor(T, forest, 1)
+        @test all(k -> block_origin(back, k) === block_origin(forest, k), forest.leaves)
+    end
+end
+
 @testset "A vertex-like set is stored closed, and a file that hides it is refused" begin
     # The failure: a set with a vertex-like dimension stored or read with
     # `N` points along it, as the half-open layout before TreeAMR 0.3 held
