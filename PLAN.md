@@ -291,12 +291,15 @@ of its own beside the cores ("M20: the appendix" in `HISTORY.md`).
 Closed blocks (TreeAMR's M22): a set with a vertex-like dimension stores
 its closed blocks under the feature `closed_blocks`, the appendix and the
 `walls` attribute are gone, and a file of the half-open layout with a
-vertex-like set is refused ("Closed blocks" in `CODE.md`). `[compat]
-TreeAMR = "=0.3.0"`; the `[sources]` path entries to the TreeAMR
-checkout beside this one go once 0.3.0 is registered.
+vertex-like set, M20's `interpolated_glue` files included, is refused
+with the reason ("Closed blocks" in `CODE.md`). Erik's decisions,
+2026-11-26: the feature `closed_blocks`, yes; half-open files with a
+vertex-like set refused, no converter; `interpolated_glue` files of the
+half-open layout refused; and TreeIOHDF5 0.2.0 released right after
+TreeAMR 0.3.0, with `[compat] TreeAMR = "=0.3.0"`.
 
-1. **(open)** Erik's answers on the half-open files — whether they are
-   converted, filled on load or stay refused — and the release's version
-   number. *Done when* `CODE.md` says what such a file becomes.
-2. Tag and register once TreeAMR 0.3.0 is registered. *Done when* CI is
-   green on GitHub and the package resolves from General.
+1. Release 0.2.0 once TreeAMR 0.3.0 is registered (Erik's): replace the
+   `[sources]` path entries by the registered TreeAMR, set the version
+   to 0.2.0, tag and register. The downstreams that bound TreeIOHDF5 at
+   `"0.1.0"` (TreeHydro, TreeWaveGR) need `"0.2"` to take it. *Done when*
+   CI is green on GitHub and the package resolves from General.

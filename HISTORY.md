@@ -188,6 +188,16 @@ refused, as the review of M22's step 10 plan decided pending Erik's
 answer on what such a file becomes. The `walls` attribute of AMR-8's
 symmetric walls went with them: TreeAMR 0.3 has no `walls` keyword.
 
+Erik decided the four questions of the port on 2026-11-26, each a reply
+to the option put to him: the feature `closed_blocks` on every file
+written from 0.3 ("yes"); a half-open file with a vertex-like set
+refused with a pointed message ("refuse"), so no converter is built and
+its cell and element sets load on their own; `interpolated_glue` files
+of the half-open layout refused ("yes"); and TreeIOHDF5 0.2.0 released
+right after TreeAMR 0.3.0 ("yes"). The refusal now says why the missing
+planes cannot be recovered without a fill, and that the file's other
+sets load.
+
 ## Checkpoints over MPI
 
 Checkpoints without parallel I/O were decided on 2026-10-02 with Erik, as M7's step 6b, replacing the shared file: one writer and one opener per file, the removal of `TreeAMRHDF5MPIExt`, `open_parallel_file`, `librarycomm` and the hints, `io = :node` as the default, and the file names were decided then; the integer `io` clamp and the contiguous groups for non-contiguous nodes were decided while implementing it. The external links for tools were recommended to Erik and included.

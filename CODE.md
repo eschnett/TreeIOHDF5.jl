@@ -365,7 +365,9 @@ outflow faces are read from the forest through TreeAMR's
 `reflecting_faces` and `outflow_faces`, since the forest stores the kind
 of each face in one field.
 
-**Closed blocks** (no format bump). From TreeAMR 0.3 (its M22, "Closed
+**Closed blocks** (no format bump; the feature `closed_blocks` on every
+file written from 0.3 that holds a vertex-like set is Erik's decision,
+2026-11-26). From TreeAMR 0.3 (its M22, "Closed
 blocks") a block owns both face planes of a vertex-like dimension, so a
 set with one stores `N + 1` points along it, a point on a block face
 once on every block holding it, which the fill makes one number. Such a
@@ -383,9 +385,10 @@ version writes are readable by the earlier readers.
   attribute (TreeAMR's AMR-8 symmetric walls, which 0.3 removed: every
   wall plane is an own point now) — saying why, and that the TreeIOHDF5
   and TreeAMR it was written with load it. Its cell-like sets can still
-  be loaded on their own (`fieldsets`). **(open)** Whether such a file
-  becomes loadable — a converter, or a reader that fills the missing
-  face planes — is Erik's to decide; until then the refusal stands.
+  be loaded on their own (`fieldsets`). Erik's decision (2026-11-26):
+  refuse, with no converter. The planes such a file lacks are not data
+  it holds but what a ghost fill with the application's operators and
+  hook computes, which a reader cannot do; the message says so.
 - `symmetric_walls` stays a known feature, so that such a file is
   refused by its set, with the reason, rather than as from a newer
   version.

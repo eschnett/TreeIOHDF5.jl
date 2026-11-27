@@ -618,6 +618,9 @@ end
     end
     @test_throws "was written with half-open ownership, before TreeAMR 0.3" load_checkpoint(
         unlisted)
+    @test_throws "cannot be recovered from it without a ghost fill" load_checkpoint(unlisted)
+    @test_throws "cell-centered and element sets can still be loaded" load_checkpoint(
+        unlisted)
     @test bytes(load_checkpoint(unlisted; fieldsets=("c",)).fieldsets["c"].state) ==
           bytes(states[3])
     walled = edited_copy(path, "walled.h5") do file

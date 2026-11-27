@@ -1043,16 +1043,20 @@ function read_layout(g, name, ::Val{D}, types, context, features) where {D}
     # which the file says by the feature `closed_blocks`; without it the
     # file is of the half-open layout, whose blocks hold `N` points along
     # such a dimension and whose high face planes were no block's.
-    # Refused, saying so, until it is decided what such a file becomes.
+    # Refused, saying why (Erik's decision, 2026-11-26): the planes the
+    # file lacks are not data it holds but what a fill would compute.
     vertexlike = any(c -> c === :vertex, centering)
     if hasattr(g, "walls") || (vertexlike && !("closed_blocks" in features))
         throw(ArgumentError(
             "$what has a vertex-like dimension (centering $centering) and was written " *
             "with half-open ownership, before TreeAMR 0.3$(hasattr(g, "walls") ?
                 " (with symmetric walls)" : ""): its blocks hold N points along such a " *
-            "dimension, where TreeAMR 0.3 holds N + 1, both face planes of a block. " *
-            "This version does not read such a file. Load it with the TreeIOHDF5 and " *
-            "TreeAMR it was written with. " * note))
+            "dimension, where TreeAMR 0.3 holds N + 1, both face planes of a block. The " *
+            "high face planes the file lacks cannot be recovered from it without a ghost " *
+            "fill, with the application's operators and boundary hook, so this version " *
+            "refuses the set. The file's cell-centered and element sets can still be " *
+            "loaded on their own (`fieldsets`); the set itself loads with the " *
+            "TreeIOHDF5 and TreeAMR it was written with. " * note))
     end
     # The order of an element set (M16), `nothing` for any other, which is
     # what the constructor takes for "none". The attribute, the centering
