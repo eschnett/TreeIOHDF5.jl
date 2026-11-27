@@ -298,8 +298,7 @@ vertex-like set refused, no converter; `interpolated_glue` files of the
 half-open layout refused; and TreeIOHDF5 0.2.0 released right after
 TreeAMR 0.3.0, with `[compat] TreeAMR = "=0.3.0"`.
 
-1. Release 0.2.0 once TreeAMR 0.3.0 is registered (Erik's): replace the
-   `[sources]` path entries by the registered TreeAMR, set the version
-   to 0.2.0, tag and register. The downstreams that bound TreeIOHDF5 at
-   `"0.1.0"` (TreeHydro, TreeWaveGR) need `"0.2"` to take it. *Done when*
-   CI is green on GitHub and the package resolves from General.
+1. Tag and register 0.2.0 (Erik's). The downstreams that bound
+   TreeIOHDF5 at `"0.1.0"` (TreeHydro, TreeWaveGR) need `"0.2"` to take
+   it. *Done when* CI is green on GitHub and the package resolves from
+   General.
